@@ -1,1 +1,1 @@
-Scheme firmware for XonnectIO node
+Scheme firmware for XonnectIO node, inspired by picobit and microscheme.
