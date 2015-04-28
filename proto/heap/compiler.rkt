@@ -52,70 +52,80 @@
     (eq? (car next) 'return)))
 
 (define compile
-  (lambda (x next)
+  (lambda (x e next)
      (cond
         [(symbol? x)
-         (list 'refer x next)]
+         (list 'refer (compile-lookup x e) next)]
         [(pair? x)
          (record-case x
             [quote (obj)
              (list 'constant obj next)]
             [lambda (vars body)
-             (list 'close vars (compile body '(return)) next)]
+             (list 'close
+                   (compile body (extend e vars) '(return))
+                   next)]
             [if (test then else)
-             (let ([thenc (compile then next)]
-                   [elsec (compile else next)])
-                (compile test (list 'test thenc elsec)))]
+             (let ([thenc (compile then e next)]
+                   [elsec (compile else e next)])
+                (compile test e (list 'test thenc elsec)))]
             [set! (var x)
-             (compile x (list 'assign var next))]
-            [define (var x)
-             (compile x (list 'assign var next))]
+             (let ([access (compile-lookup var e)])
+                (compile x e (list 'assign access next)))]
             [call/cc (x)
              (let ([c (list 'conti
                             (list 'argument
-                                  (compile x '(apply))))])
+                                  (compile x e '(apply))))])
                 (if (tail? next)
                     c
                     (list 'frame next c)))]
             [else
              (recur loop ([args (cdr x)]
-                          [c (compile (car x) '(apply))])
+                          [c (compile (car x) e '(apply))])
                 (if (null? args)
                     (if (tail? next)
                         c
                         (list 'frame next c))
                     (loop (cdr args)
                           (compile (car args)
-                                   (list 'argument c)))))])]
+                                    e
+                                    (list 'argument c)))))])]
         [else
          (list 'constant x next)])))
 
-
 (define lookup
-  (lambda (var e)
-    (recur nxtrib ([e e])
-      (recur nxtelt ([vars (caar e)]
-                     [vals (cdar e)])
-        (cond
-          [(null? vars) (nxtrib (cdr e))]
-          [(eq? (car vars) var) vals]
-          [else (nxtelt (cdr vars) (cdr vals))])))))
+  (lambda (access e)
+    (recur nxtrib ([e e] [rib (car access)])
+      (if (= rib 0)
+          (recur nxtelt ([r (car e)] [elt (cdr access)])
+            (if (= elt 0)
+                r
+                (nxtelt (cdr r) (- elt 1))))
+          (nxtrib (cdr e) (- rib 1))))))
 
 (define closure
-  (lambda (body e vars)
-    (list body e vars)))
+  (lambda (body e)
+    (list body e)))
 
 (define continuation
   (lambda (s)
-    (closure (list 'nuate s 'v) '() '(v))))
+    (closure (list 'nuate s '(0 . 0)) '())))
 
 (define call-frame
   (lambda (x e r s)
     (list x e r s)))
 
 (define extend
-  (lambda (e vars vals)
-    (cons (cons vars vals) e)))
+  (lambda (e r)
+    (cons r e)))
+
+(define compile-lookup
+  (lambda (var e)
+    (recur nxtrib ([e e] [rib 0])
+      (recur nxtelt ([vars (car e)] [elt 0])
+        (cond
+          [(null? vars) (nxtrib (cdr e) (+ rib 1))]
+          [(eq? (car vars) var) (cons rib elt)]
+          [else (nxtelt (cdr vars) (+ elt 1))])))))
 
 (define set-car!
   (lambda (p v)
@@ -123,16 +133,14 @@
 
 (define VM
   (lambda (a x e r s)
-    (display (list a x e r s))
-    (newline)
     (record-case x
       [halt () a]
       [refer (var x)
        (VM (car (lookup var e)) x e r s)]
       [constant (obj x)
        (VM obj x e r s)]
-      [close (vars body x)
-       (VM (closure body e vars) x e r s)]
+      [close (body x)
+       (VM (closure body e) x e r s)]
       [test (then else)
        (VM a (if a then else) e r s)]
       [assign (var x)
@@ -147,14 +155,14 @@
       [argument (x)
        (VM a x e (cons a r) s)]
       [apply ()
-       (record (body e vars) a
-          (VM a body (extend e vars r) '() s))]
+       (record (body e) a
+          (VM a body (extend e r) '() s))]
       [return ()
        (record (x e r s) s
           (VM a x e r s))])))
 
 (define evaluate
   (lambda (x)
-     (VM '() (compile x '(halt)) '() '() '())))
+     (VM '() (compile x '() '(halt)) '() '() '())))
 
 (evaluate '((lambda (x) (+ 1 x)) 1))
