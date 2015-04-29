@@ -153,5 +153,4 @@
        (record (x e r s) s
           (VM a x e r s))])))
 
-(compile '((lambda (x) (+ 1)) 2)
-         '(halt))
+(compile '((lambda (x y) (+ x y)) 1 2) '(halt))
