@@ -1,4 +1,9 @@
+(define x 100)
+
 (define foo
   (lambda (x) (* x x)))
 
-(foo 4)
+(define bar
+  (lambda (x) (+ 1 x)))
+
+(bar (foo 4))
