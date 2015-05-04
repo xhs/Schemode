@@ -37,6 +37,7 @@
              (list 'let
                    (map (lambda (x y)
                           (list (variable-uid x) (repr y)))
+                        (&lambda-params (car (ast-expr ast)))
                         (cdr (ast-expr ast)))
                    (repr (car (ast-expr (car (ast-expr ast))))))
              (map repr (ast-expr ast))))
