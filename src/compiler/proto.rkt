@@ -330,6 +330,82 @@
 
 ;;;
 
+(define (keep f l)
+  (cond ((null? l) '())
+        ((f (car l)) (cons (car l) (keep f (cdr l))))
+        (else (keep f (cdr l)))))
+
+(define (index-in-list x l)
+  (let loop ((l l)
+             (i 0))
+    (cond ((not (pair? l)) #f)
+          ((eq? (car l) x) i)
+          (else
+           (loop (cdr l) (+ 1 i))))))
+
+(define (closure-transform ast)
+  (define (convert ast self free-vars)
+    (define (convert1 ast)
+      (cond ((literal? ast)
+             ast)
+            ((reference? ast)
+             (let ((i (index-in-list (reference-var ast)
+                                     free-vars)))
+               (if i
+                   (make-primitive
+                    (list (make-reference '() self)
+                          (make-literal '() (+ 1 i)))
+                    '%closure-ref)
+                   ast)))
+            ((assignment? ast)
+             (make-assignment (map convert1 (ast-expr ast))
+                              (assignment-var ast)))
+            ((conditional? ast)
+             (make-conditional (map convert1 (ast-expr ast))))
+            ((primitive? ast)
+             (make-primitive (map convert1 (ast-expr ast))
+                             (primitive-op ast)))
+            ((application? ast)
+             (let ((fn (car (ast-expr ast)))
+                   (args (map convert1 (cdr (ast-expr ast)))))
+               (if (&lambda? fn)
+                   (make-application
+                    (cons (make-&lambda
+                           (list (convert1 (car (ast-expr fn))))
+                           (&lambda-params fn))
+                          args))
+                   (let ((f (convert1 fn)))
+                     (make-application
+                      (cons (make-primitive
+                             (list f (make-literal '() 0))
+                             '%closure-ref)
+                            (cons f args)))))))
+            ((&lambda? ast)
+             (let ((new-free-vars
+                    (keep (lambda (v)
+                            (not (global-variable? v)))
+                          (free-variables ast)))
+                   (new-self (new-variable 'self)))
+               (make-primitive
+                (cons (make-&lambda
+                       (list (convert (car (ast-expr ast))
+                                      new-self
+                                      new-free-vars))
+                       (cons new-self
+                             (&lambda-params ast)))
+                      (map (lambda (x)
+                             (convert1 (make-reference '() x)))
+                           new-free-vars))
+                '%closure)))
+            ((&sequence? ast)
+             (make-&sequence (map convert1 (ast-expr ast))))
+            (else
+             (error "unknown ast: ~a~n" ast))))
+    (convert1 ast))
+  (make-&lambda (list (convert ast #f '())) '()))
+
+;;;
+
 
 
 ;;;
@@ -340,3 +416,5 @@
 (define cp (cps-transform a))
 (pretty-print (repr cp))
 
+(define cl (closure-transform cp))
+(pretty-print (repr cl))
