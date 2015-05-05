@@ -1,9 +1,9 @@
 (define x 100)
 
-(define foo
-  (lambda (x) (* x x)))
+(define adder
+  (lambda (x)
+    (lambda (y) (+ x y))))
 
-(define bar
-  (lambda (x) (+ 1 x)))
+(define foo (adder 1))
 
-(bar (foo 4))
+(foo x)

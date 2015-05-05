@@ -17,7 +17,7 @@
 
 ;;;
 
-(define *debug* #f)
+(define *debug* #t)
 
 (define (repr ast)
   (cond ((literal? ast)
@@ -196,4 +196,147 @@
 
 ;;;
 
-(pretty-print (repr (parse-file "test.scm")))
+(define (diff x y)
+  (cond ((null? x) '())
+        ((memq (car x) y) (diff (cdr x) y))
+        (else (cons (car x) (diff (cdr x) y)))))
+
+(define (union x y)
+  (cond ((null? x) y)
+        ((memq (car x) y) (union (cdr x) y))
+        (else (cons (car x) (union (cdr x) y)))))
+
+(define (free-variables ast)
+  (cond ((reference? ast)
+         (list (reference-var ast)))
+        ((assignment? ast)
+         (union (free-variables (car (ast-expr ast)))
+                (list (assignment-var ast))))
+        ((&lambda? ast)
+         (diff (free-variables (car (ast-expr ast)))
+               (&lambda-params ast)))
+        (else
+         (foldl union '() (map free-variables (ast-expr ast))))))
+
+(define (cps-transform ast)
+  (define (cps ast cont)
+    (cond ((literal? ast)
+           (make-application (list cont ast)))
+          ((reference? ast)
+           (make-application (list cont ast)))
+          ((assignment? ast)
+           (cps-list (ast-expr ast)
+                     (lambda (x)
+                       (make-application
+                        (list cont
+                              (make-assignment x (assignment-var ast)))))))
+          ((conditional? ast)
+           (let ((transform
+                  (lambda (x)
+                    (cps-list (list (car (ast-expr ast)))
+                              (lambda (test)
+                                (make-conditional
+                                 (list (car test)
+                                       (cps (cadr (ast-expr ast))
+                                            x)
+                                       (cps (caddr (ast-expr ast))
+                                            x))))))))
+             (if (reference? cont)
+                 (transform cont)
+                 (let ((k (new-variable 'k)))
+                   (make-application
+                    (list (make-&lambda
+                           (list (transform (make-reference '() k)))
+                           (list k))
+                          cont))))))
+          ((primitive? ast)
+           (cps-list (ast-expr ast)
+                     (lambda (args)
+                       (make-application
+                        (list cont
+                              (make-primitive args
+                                              (primitive-op ast)))))))
+          ((application? ast)
+           (let ((f (car (ast-expr ast))))
+             (if (&lambda? f)
+                 (cps-list (cdr (ast-expr ast))
+                           (lambda (vals)
+                             (make-application
+                              (cons (make-&lambda
+                                     (list (cps-seq (ast-expr f) cont))
+                                     (&lambda-params f))
+                                    vals))))
+                 (cps-list (ast-expr ast)
+                           (lambda (args)
+                             (make-application
+                              (cons (car args)
+                                    (cons cont (cdr args)))))))))
+          ((&lambda? ast)
+           (let ((k (new-variable 'k)))
+             (make-application
+              (list cont
+                    (make-&lambda
+                     (list (cps-seq (ast-expr ast)
+                                    (make-reference '() k)))
+                     (cons k (&lambda-params ast)))))))
+          ((&sequence? ast)
+           (cps-seq (ast-expr ast) cont))
+          (else
+           (error "unknown ast: ~a~n" ast))))
+  (define (cps-list asts inner)
+    (define (body x)
+      (cps-list (cdr asts)
+                (lambda (new-asts)
+                  (inner (cons x new-asts)))))
+    (cond ((null? asts)
+           (inner '()))
+          ((or (literal? (car asts))
+               (reference? (car asts)))
+           (body (car asts)))
+          (else
+           (let ((r (new-variable 'r)))
+             (cps (car asts)
+                  (make-&lambda
+                   (list (body (make-reference '() r)))
+                   (list r)))))))
+  (define (cps-seq asts cont)
+    (cond ((null? asts)
+           (make-application (list cont #f)))
+          ((null? (cdr asts))
+           (cps (car asts) cont))
+          (else
+           (let ((r (new-variable 'r)))
+             (cps (car asts)
+                  (make-&lambda
+                   (list (cps-seq (cdr asts) cont))
+                   (list r)))))))
+  (let ((cps-ast
+         (cps ast
+              (let ((r (new-variable 'r)))
+                (make-&lambda
+                 (list (make-primitive (list (make-reference '() r))
+                                       '%halt))
+                 (list r))))))
+    (if (lookup 'call/cc (free-variables ast))
+        (make-application
+         (list (make-&lambda
+                (list cps-ast)
+                (list (new-variable '_)))
+               (expand-expr '(set! call/cc
+                                   (lambda (k f)
+                                     (f k (lambda (_ result) (k result)))))
+                            '())))
+        cps-ast)))
+
+;;;
+
+
+
+;;;
+
+(define a (parse-file "test.scm"))
+(pretty-print (repr a))
+
+(define cp (cps-transform a))
+(pretty-print (repr cp))
+
