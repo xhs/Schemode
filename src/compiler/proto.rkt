@@ -4,7 +4,7 @@
 
 ;;;
 
-(define-struct ast (expr))
+(define-struct ast (children))
 
 (define-struct (literal ast) (val))
 (define-struct (reference ast) (var))
@@ -14,56 +14,6 @@
 (define-struct (application ast) ())
 (define-struct (&lambda ast) (params))
 (define-struct (&sequence ast) ())
-
-;;;
-
-(define *debug* #t)
-
-(define (repr ast)
-  (cond ((literal? ast)
-         (literal-val ast))
-        ((reference? ast)
-         (variable-uid (reference-var ast)))
-        ((assignment? ast)
-         (list 'set!
-               (variable-uid (assignment-var ast))
-               (repr (car (ast-expr ast)))))
-        ((conditional? ast)
-         (cons 'if (map repr (ast-expr ast))))
-        ((primitive? ast)
-         (cons (primitive-op ast) (map repr (ast-expr ast))))
-        ((application? ast)
-         (if (&lambda? (car (ast-expr ast)))
-             (list 'let
-                   (map (lambda (x y)
-                          (list (variable-uid x) (repr y)))
-                        (&lambda-params (car (ast-expr ast)))
-                        (cdr (ast-expr ast)))
-                   (repr (car (ast-expr (car (ast-expr ast))))))
-             (map repr (ast-expr ast))))
-        ((&lambda? ast)
-         (list 'lambda
-               (map variable-uid (&lambda-params ast))
-               (repr (car (ast-expr ast)))))
-        ((&sequence? ast)
-         (cons 'begin (map repr (ast-expr ast))))
-        (else
-         (error "unknown ast: ~a~n" ast))))
-
-(define (binding-repr b)
-  (cond ((variable? b)
-         (list '%V (binding-id b) (variable-uid b)))
-        ((macro? b)
-         (list '%M (binding-id b)))
-        (else
-         (error "unknown binding: ~a~n" b))))
-
-(define (env-repr env)
-  (let loop ((env env)
-             (acc '()))
-    (if (null? env)
-        (reverse acc)
-        (loop (cdr env) (cons (binding-repr (car env)) acc)))))
 
 ;;;
 
@@ -187,7 +137,14 @@
                        ((= (length (cdr expr)) 1)
                         (expand-expr (cadr expr) env))
                        (else
-                        (make-&sequence (expand-exprs (cdr expr) env))))))))
+                        (make-&sequence (expand-exprs (cdr expr) env))))))
+   (make-macro 'let
+               (lambda (expr env)
+                 (expand-expr (cons (cons 'lambda
+                                          (cons (map car (cadr expr))
+                                                (cddr expr)))
+                                    (map cadr (cadr expr)))
+                              env)))))
 
 (define (parse-file filename)
   (set! *global-env* (make-initial-env))
@@ -210,13 +167,13 @@
   (cond ((reference? ast)
          (list (reference-var ast)))
         ((assignment? ast)
-         (union (free-variables (car (ast-expr ast)))
+         (union (free-variables (car (ast-children ast)))
                 (list (assignment-var ast))))
         ((&lambda? ast)
-         (diff (free-variables (car (ast-expr ast)))
+         (diff (free-variables (car (ast-children ast)))
                (&lambda-params ast)))
         (else
-         (foldl union '() (map free-variables (ast-expr ast))))))
+         (foldl union '() (map free-variables (ast-children ast))))))
 
 (define (cps-transform ast)
   (define (cps ast cont)
@@ -225,7 +182,7 @@
           ((reference? ast)
            (make-application (list cont ast)))
           ((assignment? ast)
-           (cps-list (ast-expr ast)
+           (cps-list (ast-children ast)
                      (lambda (x)
                        (make-application
                         (list cont
@@ -233,13 +190,13 @@
           ((conditional? ast)
            (let ((transform
                   (lambda (x)
-                    (cps-list (list (car (ast-expr ast)))
+                    (cps-list (list (car (ast-children ast)))
                               (lambda (test)
                                 (make-conditional
                                  (list (car test)
-                                       (cps (cadr (ast-expr ast))
+                                       (cps (cadr (ast-children ast))
                                             x)
-                                       (cps (caddr (ast-expr ast))
+                                       (cps (caddr (ast-children ast))
                                             x))))))))
              (if (reference? cont)
                  (transform cont)
@@ -250,23 +207,23 @@
                            (list k))
                           cont))))))
           ((primitive? ast)
-           (cps-list (ast-expr ast)
+           (cps-list (ast-children ast)
                      (lambda (args)
                        (make-application
                         (list cont
                               (make-primitive args
                                               (primitive-op ast)))))))
           ((application? ast)
-           (let ((f (car (ast-expr ast))))
+           (let ((f (car (ast-children ast))))
              (if (&lambda? f)
-                 (cps-list (cdr (ast-expr ast))
+                 (cps-list (cdr (ast-children ast))
                            (lambda (vals)
                              (make-application
                               (cons (make-&lambda
-                                     (list (cps-seq (ast-expr f) cont))
+                                     (list (cps-seq (ast-children f) cont))
                                      (&lambda-params f))
                                     vals))))
-                 (cps-list (ast-expr ast)
+                 (cps-list (ast-children ast)
                            (lambda (args)
                              (make-application
                               (cons (car args)
@@ -276,11 +233,11 @@
              (make-application
               (list cont
                     (make-&lambda
-                     (list (cps-seq (ast-expr ast)
+                     (list (cps-seq (ast-children ast)
                                     (make-reference '() k)))
                      (cons k (&lambda-params ast)))))))
           ((&sequence? ast)
-           (cps-seq (ast-expr ast) cont))
+           (cps-seq (ast-children ast) cont))
           (else
            (error "unknown ast: ~a~n" ast))))
   (define (cps-list asts inner)
@@ -355,30 +312,30 @@
                    (make-primitive
                     (list (make-reference '() self)
                           (make-literal '() (+ 1 i)))
-                    '%closure-ref)
+                    '%vector-ref)
                    ast)))
             ((assignment? ast)
-             (make-assignment (map convert1 (ast-expr ast))
+             (make-assignment (map convert1 (ast-children ast))
                               (assignment-var ast)))
             ((conditional? ast)
-             (make-conditional (map convert1 (ast-expr ast))))
+             (make-conditional (map convert1 (ast-children ast))))
             ((primitive? ast)
-             (make-primitive (map convert1 (ast-expr ast))
+             (make-primitive (map convert1 (ast-children ast))
                              (primitive-op ast)))
             ((application? ast)
-             (let ((fn (car (ast-expr ast)))
-                   (args (map convert1 (cdr (ast-expr ast)))))
+             (let ((fn (car (ast-children ast)))
+                   (args (map convert1 (cdr (ast-children ast)))))
                (if (&lambda? fn)
                    (make-application
                     (cons (make-&lambda
-                           (list (convert1 (car (ast-expr fn))))
+                           (list (convert1 (car (ast-children fn))))
                            (&lambda-params fn))
                           args))
                    (let ((f (convert1 fn)))
                      (make-application
                       (cons (make-primitive
                              (list f (make-literal '() 0))
-                             '%closure-ref)
+                             '%vector-ref)
                             (cons f args)))))))
             ((&lambda? ast)
              (let ((new-free-vars
@@ -388,7 +345,7 @@
                    (new-self (new-variable 'self)))
                (make-primitive
                 (cons (make-&lambda
-                       (list (convert (car (ast-expr ast))
+                       (list (convert (car (ast-children ast))
                                       new-self
                                       new-free-vars))
                        (cons new-self
@@ -396,9 +353,9 @@
                       (map (lambda (x)
                              (convert1 (make-reference '() x)))
                            new-free-vars))
-                '%closure)))
+                '%vector)))
             ((&sequence? ast)
-             (make-&sequence (map convert1 (ast-expr ast))))
+             (make-&sequence (map convert1 (ast-children ast))))
             (else
              (error "unknown ast: ~a~n" ast))))
     (convert1 ast))
@@ -410,11 +367,64 @@
 
 ;;;
 
+(define *debug* #t)
+
+(define (repr ast)
+  (cond ((literal? ast)
+         (literal-val ast))
+        ((reference? ast)
+         (variable-uid (reference-var ast)))
+        ((assignment? ast)
+         (list 'set!
+               (variable-uid (assignment-var ast))
+               (repr (car (ast-children ast)))))
+        ((conditional? ast)
+         (cons 'if (map repr (ast-children ast))))
+        ((primitive? ast)
+         (cons (primitive-op ast) (map repr (ast-children ast))))
+        ((application? ast)
+         (if (&lambda? (car (ast-children ast)))
+             (list 'let
+                   (map (lambda (x y)
+                          (list (variable-uid x) (repr y)))
+                        (&lambda-params (car (ast-children ast)))
+                        (cdr (ast-children ast)))
+                   (repr (car (ast-children (car (ast-children ast))))))
+             (map repr (ast-children ast))))
+        ((&lambda? ast)
+         (list 'lambda
+               (map variable-uid (&lambda-params ast))
+               (repr (car (ast-children ast)))))
+        ((&sequence? ast)
+         (cons 'begin (map repr (ast-children ast))))
+        (else
+         (error "unknown ast: ~a~n" ast))))
+
+(define (binding-repr b)
+  (cond ((variable? b)
+         (list '%V (binding-id b) (variable-uid b)))
+        ((macro? b)
+         (list '%M (binding-id b)))
+        (else
+         (error "unknown binding: ~a~n" b))))
+
+(define (env-repr env)
+  (let loop ((env env)
+             (acc '()))
+    (if (null? env)
+        (reverse acc)
+        (loop (cdr env) (cons (binding-repr (car env)) acc)))))
+
+(define (inspect ast)
+  (pretty-print (repr ast)))
+
+;;;
+
 (define a (parse-file "test.scm"))
-(pretty-print (repr a))
+(inspect a)
 
 (define cp (cps-transform a))
-(pretty-print (repr cp))
+(inspect cp)
 
 (define cl (closure-transform cp))
-(pretty-print (repr cl))
+(inspect cl)

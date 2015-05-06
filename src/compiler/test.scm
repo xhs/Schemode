@@ -1,9 +1,6 @@
-(define x 100)
-
-(define adder
-  (lambda (x)
-    (lambda (y) (+ x y))))
-
-(define foo (adder 1))
-
-(foo x)
+(lambda (x y z)
+  (let ((f
+    (lambda
+      (a b)
+      (+ (* a x) (* b y)))))
+  (- (f 1 2) (f 3 4))))
