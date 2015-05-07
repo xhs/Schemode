@@ -32,16 +32,19 @@
 
 ;;;
 
-(define *variable-sequence* 0)
+(define new-label
+  (let ((count 0))
+    (lambda (id)
+      (set! count (add1 count))
+      (string->symbol
+       (string-append (symbol->string id)
+                      "."
+                      (number->string count))))))
 
 (define (new-variable id)
-  (set! *variable-sequence* (+ 1 *variable-sequence*))
   (make-variable
    id
-   (string->symbol
-    (string-append (symbol->string id)
-                   "."
-                   (number->string *variable-sequence*)))))
+   (new-label id)))
 
 (define (new-global-variable id)
   (make-variable id id))
@@ -97,6 +100,9 @@
 
 (define (make-initial-env)
   (list
+   (make-macro '=
+               (lambda (expr env)
+                 (make-primitive (expand-exprs (cdr expr) env) '%=)))
    (make-macro '+
                (lambda (expr env)
                  (make-primitive (expand-exprs (cdr expr) env) '%+)))

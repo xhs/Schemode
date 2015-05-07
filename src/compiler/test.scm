@@ -1,6 +1,7 @@
-(lambda (x y z)
-  (let ((f
-    (lambda
-      (a b)
-      (+ (* a x) (* b y)))))
-  (- (f 1 2) (f 3 4))))
+(define fact1
+  (lambda (n acc)
+    (let ((i n)
+          (acc 1))
+      (if (= i 0)
+          acc
+          (fact1 (- i 1) (* acc i))))))
