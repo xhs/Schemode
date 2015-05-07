@@ -117,7 +117,7 @@
                  (make-primitive (expand-exprs (cdr expr) env) '%/)))
    (make-macro 'set!
                (lambda (expr env)
-                 (let ((x (expand-lookup (cadr expr) '())))
+                 (let ((x (expand-lookup (cadr expr) env)))
                    (if (variable? x)
                        (make-assignment (expand-exprs (cddr expr) env) x)
                        (error "assign non-variable: ~a~n" expr)))))

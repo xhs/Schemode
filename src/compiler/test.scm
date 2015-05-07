@@ -1,7 +1,7 @@
-(define fact1
-  (lambda (n acc)
-    (let ((i n)
-          (acc 1))
-      (if (= i 0)
-          acc
-          (fact1 (- i 1) (* acc i))))))
+(define bar
+  (let ((count 0))
+    (lambda ()
+      (set! count (+ 1 count))
+      count)))
+
+(bar)
