@@ -2,22 +2,39 @@
 
 ;;; structs
 
-(define-struct inst (op))
-(define-struct (sinst inst) (arg))
+(define-struct instruction (opcode args))
+
+(define *last-type* #f)
+
+(define-syntax asm
+  (syntax-rules ()
+    ((_ opcode arg+ ...)
+     (let ((op
+            (cond ((eq? 'mov opcode)
+                   (cond ((eq? 'int *last-type*)
+                          'movi)
+                         ((eq? 'bool *last-type*)
+                          'movb)
+                         ((eq? 'char *last-type*)
+                          'movc)))
+                  (else
+                   opcode))))
+       (make-instruction op (list arg+ ...))))))
 
 (define (repr x)
   (cond ((list? x)
          (map repr x))
-        ((sinst? x)
-         (list (inst-op x) (sinst-arg x)))
-        ((inst? x)
-         (list (inst-op x)))
+        ((instruction? x)
+         (cons (instruction-opcode x) (instruction-args x)))
         (else
          (error "invalid instruction:" x))))
 
-(define-struct macro (prim expander))
+(define-struct macro (id expander))
 
 ;;; utils
+
+(define acc 'acc)
+(define (sp offset) (list 'sp offset))
 
 (define new-label
   (let ((count 0))
@@ -31,6 +48,9 @@
 (define (immediate-expr? e)
   (or (integer? e) (boolean? e) (char? e)))
 
+(define (variable-expr? e)
+  (symbol? e))
+
 (define (form-expr? e)
   (and (list? e)
        (not (null? e))))
@@ -41,19 +61,33 @@
 (define (if-expr? e)
   (eqv? 'if (car e)))
 
-(define (prim-expr? e)
+(define (let-expr? e)
+  (eqv? 'let (car e)))
+
+(define (primitive-expr? e)
   (macro-lookup (car e) *primitive-macros*))
+
+(define (macro-lookup id env)
+  (cond ((null? env) #f)
+        ((eq? (macro-id (car env)) id) (car env))
+        (else (macro-lookup id (cdr env)))))
+
+(define (lookup var env)
+  (cond ((assv var env) => cdr)
+        (else #f)))
 
 ;;; compiler
 
 (define (compile e)
-  (flatten (compile-expr e)))
+  (flatten (compile-expr e 1 '())))
 
-(define (compile-expr e)
+(define (compile-expr e si env)
   (cond ((immediate-expr? e)
          (compile-immediate e))
+        ((variable-expr? e)
+         (compile-var e env))
         ((form-expr? e)
-         (compile-form e))
+         (compile-form e si env))
         (else
          (error "unknown expression:" e))))
 
@@ -63,81 +97,123 @@
         ((boolean? e)
          (compile-bool e))
         ((char? e)
-         (compile-char e))
-        (else
-         (error "invalid immediate:" e))))
+         (compile-char e))))
 
 (define (compile-integer i)
-  (make-sinst '%pushi i))
+  (set! *last-type* 'int)
+  (asm 'mov i acc))
 
 (define (compile-bool b)
-  (make-sinst '%pushb b))
+  (set! *last-type* 'bool)
+  (asm 'mov acc))
 
 (define (compile-char c)
-  (make-sinst '%pushc c))
+  (set! *last-type* 'char)
+  (asm 'mov c acc))
 
-(define (compile-form e)
+(define (compile-var var env)
+  (cond ((lookup var env) =>
+         (lambda (si) (asm 'mov (sp si) acc)))
+        (else
+         (error "undefined variable:" var))))
+
+(define (compile-form e si env)
   (cond ((begin-expr? e)
-         (compile-begin e))
+         (compile-begin e si env))
         ((if-expr? e)
-         (compile-if e))
+         (compile-if e si env))
+        ((let-expr? e)
+         (compile-let e si env))
         (else
          (let ((m (macro-lookup (car e)
                                 *primitive-macros*)))
            (if m
-               ((macro-expander m) (cdr e))
-               (compile-proc e))))))
+               ((macro-expander m) (cdr e) si env)
+               (compile-proc e si env))))))
 
-(define (compile-begin e)
-  (map compile-expr (cdr e)))
+; wrong?
+(define (compile-begin e si env)
+  (map (lambda (x) (compile-expr x si env))
+       (cdr e)))
 
-(define (compile-if e)
+(define (compile-if e si env)
   (let ((args (cdr e)))
     (if (= (length args) 3)
-        (let ((alt-label (new-label 'L))
-              (end-label (new-label 'L)))
+        (let ((alt (new-label 'L))
+              (end (new-label 'L)))
           (list
-           (compile-expr (car args))
-           (make-sinst '%jmpf alt-label)
-           (compile-expr (cadr args))
-           (make-sinst '%jmp end-label)
-           (make-sinst '%label alt-label)
-           (compile-expr (car (cddr args)))
-           (make-sinst '%label end-label)))
-        (error "invalid if statement:" args))))
+           (compile-expr (car args) si env)
+           (asm 'jmpf alt)
+           (compile-expr (cadr args) si env)
+           (asm 'jmp end)
+           (asm 'label alt)
+           (compile-expr (caddr args) si env)
+           (asm 'label end)))
+        (error "arity mismatch:" args))))
 
-(define (compile-proc e)
+(define (compile-let e si env)
+  (let loop ((bindings (cadr e))
+             (si si)
+             (env env))
+    (if (empty? bindings)
+        (compile-expr (caddr e) si env)
+        (let ((b (car bindings)))
+          (list (compile-expr (cadr b) si env)
+                (asm 'mov acc (sp si))
+                (loop (cdr bindings)
+                      (+ 1 si)
+                      (cons (cons (car b) si) env)))))))
+
+(define (compile-proc e si env)
   '())
 
-(define *primitive-macros*
-  (list
-   (make-macro 'add1
-               (lambda (args)
-                 (if (= (length args) 1)
-                     (list (compile-expr (car args))
-                           (make-sinst '%pushi 1)
-                           (make-inst '%addi))
-                     (error "arity mismatch:" args))))
-   (make-macro '+
-               (lambda (args)
-                 (if (>= (length args) 2)
-                     (list
-                      (compile-expr (car args))
-                      (let loop ((args (cdr args))
-                                 (acc '()))
-                        (if (null? args)
-                            (reverse acc)
-                            (loop (cdr args)
-                                  (cons (list
-                                         (compile-expr (car args))
-                                         (make-inst '%addi))
-                                        acc)))))
-                     (error "arity mismatch:" args))))))
+(define *primitive-macros* '())
 
-(define (macro-lookup x env)
-  (cond ((null? env) #f)
-        ((eq? (macro-prim (car env)) x) (car env))
-        (else (macro-lookup x (cdr env)))))
+(define-syntax define-primitive
+  (syntax-rules ()
+    ((_ prim lam)
+     (let ((m (make-macro 'prim lam)))
+       (set! *primitive-macros* (cons m *primitive-macros*))))))
+
+(define-primitive add1
+  (lambda (args si env)
+    (if (= (length args) 1)
+        (list (compile-expr (car args) si env)
+              (asm 'addi 1 acc))
+        (error "arity mismatch:" args))))
+
+(define-primitive +
+  (lambda (args si env)
+    (if (= (length args) 2)
+        (let ((arg0 (car args))
+              (arg1 (cadr args)))
+          (if (integer? arg1)
+              (list (compile-expr arg0 si env)
+                    (asm 'addi arg1 acc))
+              (if (integer? arg0)
+                  (list (asm 'mov arg0 (sp si))
+                        (compile-expr arg1 (+ 1 si) env)
+                        (asm 'addi (sp si) acc))
+                  (list (compile-expr arg0 si env)
+                        (asm 'mov acc (sp si))
+                        (compile-expr arg1 (+ 1 si) env)
+                        (asm 'addi (sp si) acc)))))
+        (error "arity mismatch:" args))))
+
+(define-primitive =
+  (lambda (args si env)
+    (if (= (length args) 2)
+        (let ((arg0 (car args))
+              (arg1 (cadr args)))
+          (if (integer? arg1)
+              (list (compile-expr arg0 si env)
+                    (asm 'mov arg1 (sp si))
+                    (asm 'teq acc (sp si)))
+              (list (compile-expr arg0 si env)
+                    (asm 'mov acc (sp si))
+                    (compile-expr arg1 (+ 1 si) env)
+                    (asm 'teq acc (sp si)))))
+        (error "arity mismatch:" args))))
 
 ;;; parser
 
@@ -146,6 +222,4 @@
 
 ;;; tests
 
-(define asm (compile (parse "test.scm")))
-
-(repr asm)
+(repr (compile (parse "test.scm")))
