@@ -165,7 +165,7 @@
                       (cons (cons (car b) si) env)))))))
 
 (define (compile-proc e si env)
-  '())
+  (error "not implemented"))
 
 (define *primitive-macros* '())
 
