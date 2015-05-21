@@ -1,5 +1,7 @@
 #lang racket
 
+(require racket/pretty)
+
 ;;; utils
 
 (define new-label
@@ -20,6 +22,16 @@
 (define (keyword? x)
   (or (member x '(quote begin let lambda)) ; if cond let* letrec letrec* set! define apply call/cc
       (primitive? x)))
+
+(define (merge-exprs x y)
+  (cond ((and (begin? x) (begin? y))
+         (make-begin (append (begin-seq x) (begin-seq y))))
+        ((begin? x)
+         (make-begin (append (begin-seq x) (list y))))
+        ((begin? y)
+         (make-begin (cons x (begin-seq y))))
+        (else
+         (make-begin (list x y)))))
 
 ;;; env
 
@@ -52,12 +64,19 @@
 
 (define rhs cadr)
 
+;;; immediate
+
+(define (immediate? x)
+  (or (integer? x) (boolean? x) (null? x) (char? x)))
+
 ;;; quote
 
+(define quote-body cadr)
 (define (quote? expr) (tag-list? 'quote expr))
 
 ;;; begin
 
+(define begin-seq cdr)
 (define (begin? expr) (tag-list? 'begin expr))
 (define (make-begin ls)
   (if (null? (cdr ls))
@@ -67,7 +86,7 @@
 ;;; let
 
 (define (make-let bindings body)
-  (list 'let bindings body))
+  `(let ,bindings ,body))
 (define let-bindings cadr)
 (define (let-body expr)
   (make-begin (cddr expr)))
@@ -76,7 +95,7 @@
 ;;; lambda
 
 (define (make-lambda formals body)
-  (list 'lambda formals body))
+  `(lambda ,formals ,body))
 (define lambda-formals cadr)
 (define (lambda-body expr)
   (make-begin (cddr expr)))
@@ -105,8 +124,8 @@
 
 (define-primitive + #f)
 
-;;; α-conversion
-;;; λx.x => λy.y
+;;; α conversion
+;;; makes all variables unique
 
 (define (alpha-conversion expr)
   (define (convert expr env)
@@ -141,11 +160,60 @@
           (else expr)))
   (convert expr (make-initial-env)))
 
+;;; lift constants
+;;; merges redundant constants
+
+(define (merge-constants expr)
+  (let ((constants '()))
+    (define (convert expr)
+      (cond ((quote? expr)
+             (cond ((immediate? (quote-body expr))
+                    (quote-body expr))
+                   ((assoc expr constants) => cadr)
+                   (else
+                    (let* ((const (new-label 'const))
+                           (inst `(%constant-ref ,const)))
+                      (set! constants
+                            (cons (list expr inst)
+                                  constants))
+                      inst))))
+            ((string? expr)
+             (convert `(quote ,expr)))
+            ((list? expr)
+             (map convert expr))
+            (else expr)))
+    (let ((res (convert expr)))
+      (if (null? constants)
+          res
+          (merge-exprs (make-begin
+                        (map (lambda (x)
+                               `(%constant ,(cadadr x)
+                                           ,(quote-body (car x))))
+                             constants))
+                       res)))))
+
 ;;; parser
 
 (define (parse filename)
   (cons 'begin (file->list filename)))
 
+;;; compiler
+
+(define (pipe input . pass*)
+  (let loop ((input input)
+             (pass* pass*))
+    (if (null? pass*)
+        input
+        (loop ((car pass*) input)
+              (cdr pass*)))))
+
+(define (compile filename)
+  (pipe filename
+        parse
+        alpha-conversion
+        merge-constants
+        pretty-print))
+
 ;;; test
 
-(alpha-conversion (parse "test.scm"))
+(compile "test.scm")
