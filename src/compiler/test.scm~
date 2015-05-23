@@ -1,7 +1,5 @@
-(define foo
-  (let ((count 0))
-    (lambda ()
-      (set! count (+ 1 count))
-      count)))
-
-(foo)
+(let ((x 1) (y 2))
+  "foobar"
+  ((lambda (a b)
+     "foobar"
+     (+ a b)) x y))
