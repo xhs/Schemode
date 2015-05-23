@@ -1,5 +1,4 @@
-(let ((x 1)
-      (y 2)
-      (add (lambda (a b) (+ a b))))
-  "foobar"
-  (add x y))
+(let ((add (lambda (x y) (+ x y))))
+  'foo
+  'bar
+  (add 1 2))

@@ -231,6 +231,7 @@
 (define (atomic? expr)
   (or (lambda? expr)
       (immediate? expr)
+      (quote? expr)
       (string? expr)
       (symbol? expr)))
 
@@ -274,10 +275,6 @@
      (T-k fn (lambda ($fn)
                (T*-k args (lambda ($args)
                             `(,$fn ,@$args ,cont)))))]))
-
-(define (cps fn)
-  (lambda (args ... k)
-    (k (apply fn args ...))))
 
 (define (T-k e k)
   (match e
