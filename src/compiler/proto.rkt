@@ -248,8 +248,9 @@
                              ,(T-c altern $cont)))))
          $cont))]
     [`(let ((,ids ,vals) ...) ,body)
-     `(let (,@(map make-binding ids (map M vals)))
-        ,(T-c body cont))]
+     (T*-k vals (lambda ($vals)
+                  `(let (,@(map make-binding ids $vals))
+                     ,(T-c body cont))))]
     [`(,(and prim (? primitive?)) ,args ...)
      (T*-k args (lambda ($prim)
                   `(,cont (,prim ,@args))))]
@@ -275,8 +276,9 @@
                         ,(T-c conseq cont)
                         ,(T-c altern cont)))))]
     [`(let ((,ids ,vals) ...) ,body)
-     `(let (,@(map make-binding ids (map M vals)))
-        ,(T-k body k))]
+     (T*-k vals (lambda ($vals)
+                  `(let (,@(map make-binding ids $vals))
+                     ,(T-k body k))))]
     [`(,_ ,_ ...)
      (let* ((r (new-label 'r))
             (cont `(lambda (,r) ,(k r))))
@@ -384,6 +386,7 @@
         alpha-conversion
         cps-conversion
         merge-constants
+        closure-conversion
         pretty-print))
 
 ;;; test
