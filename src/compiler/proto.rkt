@@ -21,7 +21,7 @@
             (car ls))))
 
 (define (keyword? x)
-  (or (member x '(quote begin let if lambda)) ; cond let* letrec letrec* set! define apply call/cc
+  (or (member x '(quote begin let if lambda)) ; cond let* letrec letrec* set! define apply
       (primitive? x)))
 
 (define (merge-exprs x y)
@@ -33,6 +33,18 @@
          (make-begin (cons x (begin-seq y))))
         (else
          (make-begin (list x y)))))
+
+(define (diff s1 s2)
+  (cond ((null? s1) '())
+        ((memq (car s1) s2) (diff (cdr s1) s2))
+        (else (cons (car s1) (diff (cdr s1) s2)))))
+
+(define (union s1 s2)
+  (cond ((null? s1) s2)
+        ((memq (car s1) s2) (union (cdr s1) s2))
+        (else (cons (car s1) (union (cdr s1) s2)))))
+
+(define (union-multi sets) (foldl union '() sets))
 
 (define (pipe input . pass*)
   (let loop ((input input)
@@ -142,6 +154,8 @@
 (define-primitive %constant #f)
 (define-primitive %constant-ref #f)
 (define-primitive %halt #f)
+(define-primitive %slot #f)
+(define-primitive set! #f)
 
 ;;; application
 
@@ -192,38 +206,6 @@
            (map (lambda (e) (convert e env)) expr))
           (else expr)))
   (convert expr (make-initial-env)))
-
-;;; lift constants
-;;; merges redundant constants
-
-(define (merge-constants expr)
-  (let ((constants '()))
-    (define (convert expr)
-      (cond ((quote? expr)
-             (cond ((immediate? (quote-body expr))
-                    (quote-body expr))
-                   ((assoc expr constants) => cadr)
-                   (else
-                    (let* ((const (new-label 'const))
-                           (inst `(%constant-ref ,const)))
-                      (set! constants
-                            (cons (list expr inst)
-                                  constants))
-                      inst))))
-            ((string? expr)
-             (convert `(quote ,expr)))
-            ((list? expr)
-             (map convert expr))
-            (else expr)))
-    (let ((res (convert expr)))
-      (if (null? constants)
-          res
-          (merge-exprs (make-begin
-                        (map (lambda (x)
-                               `(%constant ,(cadadr x)
-                                           ,(quote-body (car x))))
-                             constants))
-                       res)))))
 
 ;;; cps conversion
 ;;; desugars continuations into functions
@@ -309,6 +291,85 @@
 
 (define (cps-conversion expr)
   (T*-k expr (lambda (x) x)))
+
+;;; lift constants
+;;; merges redundant constants
+
+(define (merge-constants expr)
+  (let ((constants '()))
+    (define (convert expr)
+      (cond ((quote? expr)
+             (cond ((immediate? (quote-body expr))
+                    (quote-body expr))
+                   ((assoc expr constants) => cadr)
+                   (else
+                    (let* ((const (new-label 'const))
+                           (inst `(%constant-ref ,const)))
+                      (set! constants
+                            (cons (list expr inst)
+                                  constants))
+                      inst))))
+            ((string? expr)
+             (convert `(quote ,expr)))
+            ((list? expr)
+             (map convert expr))
+            (else expr)))
+    (let ((res (convert expr)))
+      (make-let
+       (map (lambda (x)
+              (make-binding (cadadr x) '%slot))
+            constants)
+       (if (null? constants)
+           res
+           (merge-exprs (make-begin
+                         (map (lambda (x)
+                                `(%constant ,(cadadr x)
+                                            ,(quote-body (car x))))
+                              constants))
+                        res))))))
+
+;;; closure conversion
+;;; handles free variables
+
+(define (free-variables expr)
+  (match expr
+    [(or (? immediate?)
+         (? string?)
+         (? quote?)
+         (? keyword?))
+     '()]
+    [(? variable?) (list expr)]
+    [`(lambda (,formals ...) ,body)
+     (diff (free-variables body) formals)]
+    [`(let ((,ids ,vals) ...) ,body)
+     (append (union-multi (map free-variables vals))
+             (diff (free-variables body) ids))]
+    [else
+     (union-multi (map free-variables expr))]))
+
+(define (closure-conversion expr)
+  (let ((bindings '())
+        (constants (map lhs (let-bindings expr))))
+    (define (convert expr)
+      (match expr
+        [`(lambda (,formals ...) ,body)
+         (let ((label (new-label 'code))
+               (fvs (filter (lambda (x) (not (member x constants)))
+                            (free-variables expr)))
+               (body (convert body)))
+           (set! bindings
+                 (cons (make-binding label
+                                     `(%code ,formals ,fvs ,body))
+                       bindings))
+           `(%closure ,label ,fvs))]
+        [`(let ((,ids ,vals) ...) ,body)
+         `(let (,@(map make-binding ids (map convert vals)))
+            ,(convert body))]
+        [(? list?)
+         (map convert expr)]
+        [else expr]))
+    (let ((body (convert (let-body expr))))
+      (make-let bindings body))))
 
 ;;; parser
 
