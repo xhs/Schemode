@@ -380,6 +380,24 @@
 
 ;;; compiler
 
+(define (asm opcode . args)
+  `(,opcode ,@args))
+
+(define (emit-code expr)
+  '())
+
+(define (emit-immediate expr)
+  (cond ((integer? expr)
+         (asm 'loadint expr))
+        ((boolean? expr)
+         (asm 'loadbool expr))
+        ((null? expr)
+         (asm 'loadnil))
+        ((char? expr)
+         (asm 'loadchar expr))
+        (else
+         (error 'emit-immediate (format "unknown immediate value: ~a" expr)))))
+
 (define (compile filename)
   (pipe filename
         parse
@@ -387,6 +405,7 @@
         cps-conversion
         merge-constants
         closure-conversion
+        ;emit-code
         pretty-print))
 
 ;;; test

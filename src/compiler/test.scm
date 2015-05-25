@@ -2,4 +2,5 @@
                (lambda (x)
                  (set! acc (+ x acc))
                  acc))))
-  (sum 100))
+  (sum 100)
+  "returned value")
