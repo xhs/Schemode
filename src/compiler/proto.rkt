@@ -25,11 +25,11 @@
       (primitive? x)))
 
 (define (merge-exprs x y)
-  (cond ((and (begin? x) (begin? y))
+  (cond ((and (begin-expr? x) (begin-expr? y))
          (make-begin (append (begin-seq x) (begin-seq y))))
-        ((begin? x)
+        ((begin-expr? x)
          (make-begin (append (begin-seq x) (list y))))
-        ((begin? y)
+        ((begin-expr? y)
          (make-begin (cons x (begin-seq y))))
         (else
          (make-begin (list x y)))))
@@ -98,7 +98,7 @@
 ;;; begin
 
 (define begin-seq cdr)
-(define (begin? expr) (tag-list? 'begin expr))
+(define (begin-expr? expr) (tag-list? 'begin expr))
 (define (make-begin ls)
   (if (null? (cdr ls))
       (car ls)
@@ -109,7 +109,7 @@
 (define if-test cadr)
 (define if-conseq caddr)
 (define if-altern cadddr)
-(define (if? expr) (tag-list? 'if expr))
+(define (if-expr? expr) (tag-list? 'if expr))
 
 ;;; let
 
@@ -118,7 +118,7 @@
 (define let-bindings cadr)
 (define (let-body expr)
   (make-begin (cddr expr)))
-(define (let? expr) (tag-list? 'let expr))
+(define (let-expr? expr) (tag-list? 'let expr))
 
 ;;; lambda
 
@@ -144,18 +144,30 @@
 (define macro-prim car)
 (define macro-expander cdr)
 (define (primitive? x) (macro-lookup x *primitive-macros*))
+(define (primitive-emitter p)
+  (macro-expander (macro-lookup p *primitive-macros*)))
 
 (define (macro-lookup prim macros)
   (cond ((null? macros) #f)
         ((eq? (macro-prim (car macros)) prim) (car macros))
         (else (macro-lookup prim (cdr macros)))))
 
-(define-primitive + #f)
+(define-primitive +
+  (lambda (args si env)
+    (let ((lhs (car args))
+          (rhs (cadr args)))
+      (list (emit lhs si env)
+            (asm 'store (frame si))
+            (emit rhs (add1 si) env)
+            (asm 'addint (frame si))))))
+
+(define-primitive %code #f)
+(define-primitive %closure #f)
+
 (define-primitive %constant #f)
 (define-primitive %constant-ref #f)
+
 (define-primitive %halt #f)
-(define-primitive %slot #f)
-(define-primitive set! #f)
 
 ;;; application
 
@@ -174,7 +186,7 @@
 ;;; α conversion
 ;;; makes all variables unique
 
-(define (alpha-conversion expr)
+(define (alpha-convert expr)
   (define (convert expr env)
     (cond ((variable? expr)
            (or (lookup expr env)
@@ -188,7 +200,7 @@
              (make-lambda (map (lambda (x) (lookup x new-env)) formals)
                           (convert (lambda-body expr) new-env))))
           ((quote? expr) expr)
-          ((let? expr)
+          ((let-expr? expr)
            (let* ((bindings (let-bindings expr))
                   (ids (map lhs bindings))
                   (new-env
@@ -291,13 +303,13 @@
                       (T*-k (cdr es) (lambda (tl)
                                        (k (cons hd tl))))))))
 
-(define (cps-conversion expr)
-  (T*-k expr (lambda (x) x)))
+(define (cps-convert expr)
+  (T*-k expr (lambda (x) '(%halt))))
 
 ;;; lift constants
 ;;; merges redundant constants
 
-(define (merge-constants expr)
+(define (constants-merge expr)
   (let ((constants '()))
     (define (convert expr)
       (cond ((quote? expr)
@@ -319,7 +331,7 @@
     (let ((res (convert expr)))
       (make-let
        (map (lambda (x)
-              (make-binding (cadadr x) '%slot))
+              (make-binding (cadadr x) #f))
             constants)
        (if (null? constants)
            res
@@ -349,7 +361,7 @@
     [else
      (union-multi (map free-variables expr))]))
 
-(define (closure-conversion expr)
+(define (closure-convert expr)
   (let ((bindings '())
         (constants (map lhs (let-bindings expr))))
     (define (convert expr)
@@ -383,8 +395,28 @@
 (define (asm opcode . args)
   `(,opcode ,@args))
 
-(define (emit-code expr)
-  '())
+(define (frame index)
+  `(frame ,index))
+
+(define (code-emit expr)
+  (emit expr 1 '()))
+
+(define (emit expr si env)
+  (match expr
+    [(? immediate?)
+     (emit-immediate expr)]
+    [`(begin ,expr+ ...)
+     (map (lambda (e) (emit e si env)) expr+)]
+    [`(if ,_ ,_ ,_)
+     (emit-if expr si env)]
+    [`(let (,_ ...) ,_)
+     (emit-let expr si env)]
+    [`(,(and prim (? primitive?)) ,args ...)
+     ((primitive-emitter prim) args si env)]
+    [`(,fn ,args ...)
+     '()]
+    [else
+     (error 'emit-code (format "unknown expression: ~a" expr))]))
 
 (define (emit-immediate expr)
   (cond ((integer? expr)
@@ -398,14 +430,40 @@
         (else
          (error 'emit-immediate (format "unknown immediate value: ~a" expr)))))
 
+(define (emit-if expr si env)
+  (let ((alt-label (new-label 'L))
+        (end-label (new-label 'L)))
+    (list (emit (if-test expr) si env)
+          (asm 'jump#f alt-label)
+          (emit (if-conseq expr) si env)
+          (asm 'jump end-label)
+          (asm 'label alt-label)
+          (emit (if-altern expr) si env)
+          (asm 'label end-label))))
+
+(define (emit-let expr si env)
+  (let loop ((bindings (let-bindings expr))
+             (si si)
+             (env env))
+    (if (empty? bindings)
+        (emit (let-body expr) si env)
+        (let ((b (car bindings)))
+          (list (emit (binding-val b) si env)
+                (asm 'store (frame si))
+                (loop (cdr bindings)
+                      (add1 si)
+                      (cons (make-binding (binding-id b) si)
+                            env)))))))
+
 (define (compile filename)
   (pipe filename
         parse
-        alpha-conversion
-        cps-conversion
-        merge-constants
-        closure-conversion
-        ;emit-code
+        alpha-convert
+        cps-convert
+        constants-merge
+        closure-convert
+        ;code-emit
+        ;assemble
         pretty-print))
 
 ;;; test

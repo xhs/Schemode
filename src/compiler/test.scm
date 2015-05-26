@@ -1,6 +1,1 @@
-(let ((sum (let ((acc 0))
-               (lambda (x)
-                 (set! acc (+ x acc))
-                 acc))))
-  (sum 100)
-  "returned value")
+(+ 1 2)
