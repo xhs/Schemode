@@ -152,37 +152,6 @@
         ((eq? (macro-prim (car macros)) prim) (car macros))
         (else (macro-lookup prim (cdr macros)))))
 
-(define-primitive +
-  (lambda (args si env)
-    (let ((lhs (car args))
-          (rhs (cadr args)))
-      (list (emit lhs si env)
-            (asm 'store (frame si))
-            (emit rhs (add1 si) env)
-            (asm 'addint (frame si))))))
-
-(define-primitive %code #f)
-(define-primitive %closure #f)
-
-(define-primitive %constant #f)
-(define-primitive %constant-ref #f)
-
-(define-primitive %halt #f)
-
-;;; application
-
-(define (app? expr)
-  (and (list? expr) (not (null? expr))))
-(define (apply? expr) (tag-list? 'apply expr))
-(define (app-fn expr)
-  (if (apply? expr)
-      (cadr expr)
-      (car expr)))
-(define (app-args expr)
-  (if (apply? expr)
-      (cddr expr)
-      (cdr expr)))
-
 ;;; α conversion
 ;;; makes all variables unique
 
@@ -231,70 +200,70 @@
 
 (define (M e)
   (match e
-    [`(lambda (,formals ...) ,body)
+    (`(lambda (,formals ...) ,body)
      (let (($cont (new-label 'cont)))
        `(lambda (,@formals ,$cont)
-          ,(T-c body $cont)))]
-    ['call/cc
+          ,(T-c body $cont))))
+    ('call/cc
      `(lambda (k f)
-        (f k (lambda (_ result) (k result))))]
-    [(? atomic?) e]
-    [else
-     (error 'M (format "invalid expression: ~a" e))]))
+        (f k (lambda (_ result) (k result)))))
+    ((? atomic?) e)
+    (else
+     (error 'M (format "invalid expression: ~a" e)))))
 
 (define (T-c e cont)
   (match e
-    [(? atomic?)
-     `(,cont ,(M e))]
-    [`(begin ,expr)
-     (T-c expr cont)]
-    [`(begin ,expr ,expr+ ...)
+    ((? atomic?)
+     `(,cont ,(M e)))
+    (`(begin ,expr)
+     (T-c expr cont))
+    (`(begin ,expr ,expr+ ...)
      (T-k expr (lambda (_)
-                 (T-c `(begin ,@expr+) cont)))]
-    [`(if ,test ,conseq ,altern)
+                 (T-c `(begin ,@expr+) cont))))
+    (`(if ,test ,conseq ,altern)
      (let (($cont (new-label 'cont)))
        `((lambda (,$cont)
            ,(T-k test (lambda ($test)
                         `(if ,$test
                              ,(T-c conseq $cont)
                              ,(T-c altern $cont)))))
-         $cont))]
-    [`(let ((,ids ,vals) ...) ,body)
+         $cont)))
+    (`(let ((,ids ,vals) ...) ,body)
      (T*-k vals (lambda ($vals)
                   `(let (,@(map make-binding ids $vals))
-                     ,(T-c body cont))))]
-    [`(,(and prim (? primitive?)) ,args ...)
+                     ,(T-c body cont)))))
+    (`(,(and prim (? primitive?)) ,args ...)
      (T*-k args (lambda ($prim)
-                  `(,cont (,prim ,@args))))]
-    [`(,fn ,args ...)
+                  `(,cont (,prim ,@args)))))
+    (`(,fn ,args ...)
      (T-k fn (lambda ($fn)
                (T*-k args (lambda ($args)
-                            `(,$fn ,@$args ,cont)))))]))
+                            `(,$fn ,@$args ,cont))))))))
 
 (define (T-k e k)
   (match e
-    [(? atomic?)
-     (k (M e))]
-    [`(begin ,expr)
-     (T-k expr k)]
-    [`(begin ,expr ,expr+ ...)
+    ((? atomic?)
+     (k (M e)))
+    (`(begin ,expr)
+     (T-k expr k))
+    (`(begin ,expr ,expr+ ...)
      (T-k expr (lambda (_)
-                 (T-k `(begin ,@expr+) k)))]
-    [`(if ,test ,conseq ,altern)
+                 (T-k `(begin ,@expr+) k))))
+    (`(if ,test ,conseq ,altern)
      (let* ((r (new-label 'r))
             (cont `(lambda (,r) ,(k r))))
        (T-k test (lambda ($test)
                    `(if ,$test
                         ,(T-c conseq cont)
-                        ,(T-c altern cont)))))]
-    [`(let ((,ids ,vals) ...) ,body)
+                        ,(T-c altern cont))))))
+    (`(let ((,ids ,vals) ...) ,body)
      (T*-k vals (lambda ($vals)
                   `(let (,@(map make-binding ids $vals))
-                     ,(T-k body k))))]
-    [`(,_ ,_ ...)
+                     ,(T-k body k)))))
+    (`(,_ ,_ ...)
      (let* ((r (new-label 'r))
             (cont `(lambda (,r) ,(k r))))
-       (T-c e cont))]))
+       (T-c e cont)))))
 
 (define (T*-k es k)
   (if (null? es)
@@ -347,41 +316,41 @@
 
 (define (free-variables expr)
   (match expr
-    [(or (? immediate?)
+    ((or (? immediate?)
          (? string?)
          (? quote?)
          (? keyword?))
-     '()]
-    [(? variable?) (list expr)]
-    [`(lambda (,formals ...) ,body)
-     (diff (free-variables body) formals)]
-    [`(let ((,ids ,vals) ...) ,body)
+     '())
+    ((? variable?) (list expr))
+    (`(lambda (,formals ...) ,body)
+     (diff (free-variables body) formals))
+    (`(let ((,ids ,vals) ...) ,body)
      (append (union-multi (map free-variables vals))
-             (diff (free-variables body) ids))]
-    [else
-     (union-multi (map free-variables expr))]))
+             (diff (free-variables body) ids)))
+    (else
+     (union-multi (map free-variables expr)))))
 
 (define (closure-convert expr)
   (let ((bindings '())
         (constants (map lhs (let-bindings expr))))
     (define (convert expr)
       (match expr
-        [`(lambda (,formals ...) ,body)
+        (`(lambda (,formals ...) ,body)
          (let ((label (new-label 'code))
                (fvs (filter (lambda (x) (not (member x constants)))
                             (free-variables expr)))
                (body (convert body)))
            (set! bindings
                  (cons (make-binding label
-                                     `(%code ,formals ,fvs ,body))
+                                     `(%code ,label ,formals ,fvs ,body))
                        bindings))
-           `(%closure ,label ,fvs))]
-        [`(let ((,ids ,vals) ...) ,body)
+           `(%closure ,label ,fvs)))
+        (`(let ((,ids ,vals) ...) ,body)
          `(let (,@(map make-binding ids (map convert vals)))
-            ,(convert body))]
-        [(? list?)
-         (map convert expr)]
-        [else expr]))
+            ,(convert body)))
+        ((? list?)
+         (map convert expr))
+        (else expr)))
     (let ((body (convert (let-body expr))))
       (make-let bindings body))))
 
@@ -401,59 +370,110 @@
 (define (code-emit expr)
   (emit expr 1 '()))
 
-(define (emit expr si env)
+(define (emit expr fi env)
   (match expr
-    [(? immediate?)
-     (emit-immediate expr)]
-    [`(begin ,expr+ ...)
-     (map (lambda (e) (emit e si env)) expr+)]
-    [`(if ,_ ,_ ,_)
-     (emit-if expr si env)]
-    [`(let (,_ ...) ,_)
-     (emit-let expr si env)]
-    [`(,(and prim (? primitive?)) ,args ...)
-     ((primitive-emitter prim) args si env)]
-    [`(,fn ,args ...)
-     '()]
-    [else
-     (error 'emit-code (format "unknown expression: ~a" expr))]))
+    ((? immediate?)
+     (emit-immediate expr))
+    ((? variable?)
+     (emit-variable expr fi env))
+    (`(begin ,expr+ ...)
+     (map (lambda (e) (emit e fi env)) expr+))
+    (`(if ,_ ,_ ,_)
+     (emit-if expr fi env))
+    (`(let (,_ ...) ,_)
+     (emit-let expr fi env))
+    (`(,(and prim (? primitive?)) ,args ...)
+     ((primitive-emitter prim) args fi env))
+    (`(,fn ,args ...)
+     (emit-app fn args fi env))
+    (else
+     (error 'emit-code (format "unknown expresfion: ~a" expr)))))
 
 (define (emit-immediate expr)
   (cond ((integer? expr)
-         (asm 'loadint expr))
+         (asm 'load-int expr))
         ((boolean? expr)
-         (asm 'loadbool expr))
+         (asm 'load-bool expr))
         ((null? expr)
-         (asm 'loadnil))
+         (asm 'load-nil))
         ((char? expr)
-         (asm 'loadchar expr))
+         (asm 'load-char expr))
         (else
          (error 'emit-immediate (format "unknown immediate value: ~a" expr)))))
 
-(define (emit-if expr si env)
+(define (emit-variable expr fi env)
+  (cond ((lookup expr env)
+         => (lambda (index) (asm 'fetch (frame index))))
+        (else
+         (error 'emit (format "undefined variable: ~a" expr)))))
+
+(define (emit-if expr fi env)
   (let ((alt-label (new-label 'L))
         (end-label (new-label 'L)))
-    (list (emit (if-test expr) si env)
-          (asm 'jump#f alt-label)
-          (emit (if-conseq expr) si env)
+    (list (emit (if-test expr) fi env)
+          (asm 'jump-#f alt-label)
+          (emit (if-conseq expr) fi env)
           (asm 'jump end-label)
           (asm 'label alt-label)
-          (emit (if-altern expr) si env)
+          (emit (if-altern expr) fi env)
           (asm 'label end-label))))
 
-(define (emit-let expr si env)
+(define (emit-let expr fi env)
   (let loop ((bindings (let-bindings expr))
-             (si si)
+             (fi fi)
              (env env))
     (if (empty? bindings)
-        (emit (let-body expr) si env)
+        (emit (let-body expr) fi env)
         (let ((b (car bindings)))
-          (list (emit (binding-val b) si env)
-                (asm 'store (frame si))
+          (list (emit (binding-val b) fi env)
+                (asm 'store (frame fi))
                 (loop (cdr bindings)
-                      (add1 si)
-                      (cons (make-binding (binding-id b) si)
+                      (add1 fi)
+                      (cons (make-binding (binding-id b) fi)
                             env)))))))
+
+(define (emit-app fn args fi env)
+  '())
+
+(define-primitive +
+  (lambda (args fi env)
+    (match args
+      (`(,lhs ,rhs)
+       (list (emit lhs fi env)
+             (asm 'store (frame fi))
+             (emit rhs (add1 fi) env)
+             (asm 'add-int (frame fi))))
+      (else
+       (error '+ (format "arity mismatch: ~a" args))))))
+
+(define-primitive <
+  (lambda (args fi env)
+    (match args
+      (`(,lhs ,rhs)
+       (list (emit lhs fi env)
+             (asm 'store (frame fi))
+             (emit rhs (add1 fi) env)
+             (asm 'test-lt (frame fi))))
+      (error '< (format "arity mismatch: ~a" args)))))
+
+(define-primitive %code
+  (lambda (args fi env)
+    (match args
+      (`(,label ,formals ,fvs ,body)
+       '()))))
+
+(define-primitive %closure
+  (lambda (args fi env)
+    (match args
+      (`(,label ,fvs)
+       '()))))
+
+(define-primitive %constant #f)
+(define-primitive %constant-ref #f)
+
+(define-primitive %halt
+  (lambda (args fi env)
+    (asm 'halt)))
 
 (define (compile filename)
   (pipe filename
@@ -461,7 +481,7 @@
         alpha-convert
         cps-convert
         constants-merge
-        closure-convert
+        ;closure-convert
         ;code-emit
         ;assemble
         pretty-print))
