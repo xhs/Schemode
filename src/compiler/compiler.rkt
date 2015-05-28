@@ -11,7 +11,7 @@
       (set! count (add1 count))
       (string->symbol
        (string-append (symbol->string x)
-                      "_"
+                      "."
                       (number->string count))))))
 
 ;; environment
@@ -120,6 +120,20 @@
                          (let* (,@tl)
                            ,@body))
                       env))))
+      (`(letrec ((,ids ,vals) ...) ,body ...)
+       (let ((temps (map (lambda (_) (new-label 't))
+                         ids)))
+         (convert `(let (,@(map (lambda (id)
+                                  `(,id #f))
+                                ids))
+                     (let (,@(map (lambda (temp val)
+                                    `(,temp ,val))
+                                  temps vals))
+                       ,@(map (lambda (id temp)
+                                `(set! ,id ,temp))
+                              ids temps))
+                     ,@body)
+                  env)))
       (`(,(and special (? special?)) ,expr* ...)
        `(,special ,@(map (lambda (v) (convert v env)) expr*)))
       (`(,expr+ ...)
