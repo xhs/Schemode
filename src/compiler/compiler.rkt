@@ -68,7 +68,7 @@
       (lookup id *global-vars*)))
 
 (define (special? sym)
-  (or (member sym '(begin))
+  (or (member sym '(begin apply if))
       (primitive? sym)))
 
 (define (alpha-convert expr)
@@ -110,14 +110,14 @@
                        bindings))
             ,(convert (cons 'begin body) new-env))))
       (`(let* (,bindings ...) ,body ...)
-       (let ((hd (car bindings))
-             (tl (cdr bindings)))
-         (if (null? tl)
-             (convert `(let (,hd)
+       (let ((head (car bindings))
+             (tail (cdr bindings)))
+         (if (null? tail)
+             (convert `(let (,head)
                          ,@body)
                       env)
-             (convert `(let (,hd)
-                         (let* (,@tl)
+             (convert `(let (,head)
+                         (let* (,@tail)
                            ,@body))
                       env))))
       (`(letrec ((,ids ,vals) ...) ,body ...)
@@ -141,6 +141,94 @@
       (else expr)))
   (convert expr '()))
 
+;; cps conversion
+
+(define (atomic? expr)
+  (match expr
+    (`(lambda (,_ ...) ,_) #t)
+    ((or (? symbol?)
+         (? integer?)
+         (? boolean?)
+         (? char?)) #t)
+    (else #f)))
+
+(define (M expr)
+  (match expr
+    (`(lambda (,formals ...) ,body)
+     (let (($cont (new-label 'cont)))
+       `(lambda (,@formals ,$cont)
+          ,(T-c body $cont))))
+    ('call/cc
+     `(lambda (k f)
+        (f k (lambda (_ result) (k result)))))
+    ((? atomic?) expr)
+    (else
+     (error 'M (format "invalid expression: ~a" expr)))))
+
+(define (T-c expr cont)
+  (match expr
+    ((? atomic?)
+     `(,cont ,(M expr)))
+    (`(begin ,expr)
+     (T-c expr cont))
+    (`(begin ,expr ,expr+ ...)
+     (T-k expr (lambda (_)
+                 (T-c `(begin ,@expr+) cont))))
+    (`(if ,test ,conseq ,altern)
+     (let (($cont (new-label 'cont)))
+       `((lambda (,$cont)
+           ,(T-k test (lambda ($test)
+                        `(if ,$test
+                             ,(T-c conseq $cont)
+                             ,(T-c altern $cont)))))
+         $cont)))
+    (`(let ((,ids ,vals) ...) ,body)
+     (T*-k vals (lambda ($vals)
+                  `(let (,@(map list ids $vals))
+                     ,(T-c body cont)))))
+    (`(,(and prim (? primitive?)) ,args ...)
+     (T*-k args (lambda ($prim)
+                  `(,cont (,prim ,@args)))))
+    (`(,fn ,args ...)
+     (T-k fn (lambda ($fn)
+               (T*-k args (lambda ($args)
+                            `(,$fn ,@$args ,cont))))))))
+
+(define (T-k expr k)
+  (match expr
+    ((? atomic?)
+     (k (M expr)))
+    (`(begin ,expr)
+     (T-k expr k))
+    (`(begin ,expr ,expr+ ...)
+     (T-k expr (lambda (_)
+                 (T-k `(begin ,@expr+) k))))
+    (`(if ,test ,conseq ,altern)
+     (let* ((r (new-label 'r))
+            (cont `(lambda (,r) ,(k r))))
+       (T-k test (lambda ($test)
+                   `(if ,$test
+                        ,(T-c conseq cont)
+                        ,(T-c altern cont))))))
+    (`(let ((,ids ,vals) ...) ,body)
+     (T*-k vals (lambda ($vals)
+                  `(let (,@(map list ids $vals))
+                     ,(T-k body k)))))
+    (`(,_ ,_ ...)
+     (let* ((r (new-label 'r))
+            (cont `(lambda (,r) ,(k r))))
+       (T-c expr cont)))))
+
+(define (T*-k exprs k)
+  (if (null? exprs)
+      (k '())
+      (T-k (car exprs) (lambda (head)
+                      (T*-k (cdr exprs) (lambda (tail)
+                                       (k (cons head tail))))))))
+
+(define (cps-convert expr)
+  (T*-k expr (lambda (x) x)))
+
 ;; compile
 
 (define (pipe input . pass*)
@@ -155,6 +243,7 @@
   (pipe filename
         parse
         alpha-convert
+        cps-convert
         pretty-print))
 
 ;; test
