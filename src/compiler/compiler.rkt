@@ -72,6 +72,9 @@
 (define-primitive + #t)
 (define-primitive - #t)
 (define-primitive * #t)
+(define-primitive vector #t)
+(define-primitive vector-ref #t)
+(define-primitive set! #t)
 
 ;; parse
 
@@ -277,7 +280,7 @@
           (else (loop (cdr lst) (add1 index))))))
 
 (define (closure-convert expr)
-  (define (convert expr self fvs)
+  (define (convert expr closure fvs)
     (define (convert1 expr)
       (match expr
         ((or (? integer?)
@@ -287,10 +290,8 @@
         ((? symbol?)
          (let ((index (index-of expr fvs)))
            (if index
-               `(%closure-ref ,self ,(add1 index))
+               `(vector-ref ,closure ,index)
                expr)))
-        (`(set! ,id ,val)
-         `(set! ,id ,(convert1 val)))
         (`(let ((,ids ,vals) ...) ,body)
          `(let (,@(map list ids (map convert1 vals)))
             ,(convert1 body)))
@@ -300,10 +301,11 @@
                               (free-variables expr))))
            (if (null? new-fvs)
                `(lambda (,@formals) ,(convert1 body))
-               (let ((new-self (new-label 'self)))
-                 `(%closure (lambda (,new-self ,@formals)
-                              ,(convert body new-self new-fvs))
-                            ,@(map convert1 new-fvs))))))
+               (let ((new-closure (new-label 'closure)))
+                 `(let ((,new-closure
+                         (vector ,@(map convert1 new-fvs))))
+                    (lambda (,@formals)
+                      ,(convert body new-closure new-fvs)))))))
         (`(,(and prim (? primitive?)) ,args ...)
          `(,prim ,@(map convert1 args)))
         (`(,(and special (? special?)) ,expr+ ...)
@@ -329,7 +331,7 @@
   (pipe filename
         parse
         alpha-convert
-        ;cps-convert
+        cps-convert
         closure-convert
         pretty-print))
 
