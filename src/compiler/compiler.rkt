@@ -14,6 +14,10 @@
                       "."
                       (number->string count))))))
 
+(define (special? sym)
+  (or (member sym '(begin apply if))
+      (primitive? sym)))
+
 ;; environment
 
 (define-struct binding (id val))
@@ -29,6 +33,19 @@
         ((eq? (binding-id (car set)) id)
          (binding-val (car set)))
         (else (lookup id (cdr set)))))
+
+(define *global-vars* '())
+
+(define (var-lookup id env)
+  (or (lookup id env)
+      (lookup id *global-vars*)))
+
+(define (global-var? id)
+  (define (lookup id env)
+    (cond ((null? env) #f)
+          ((eq? (binding-val (car env)) id) #t)
+          (else (lookup id (cdr env)))))
+  (lookup id *global-vars*))
 
 ;; primitive
 
@@ -53,6 +70,8 @@
   (macro-lookup sym *primitives*))
 
 (define-primitive + #t)
+(define-primitive - #t)
+(define-primitive * #t)
 
 ;; parse
 
@@ -60,16 +79,6 @@
   (cons 'begin (file->list filename)))
 
 ;; alpha conversion
-
-(define *global-vars* '())
-
-(define (var-lookup id env)
-  (or (lookup id env)
-      (lookup id *global-vars*)))
-
-(define (special? sym)
-  (or (member sym '(begin apply if))
-      (primitive? sym)))
 
 (define (alpha-convert expr)
   (define (convert expr env)
@@ -229,6 +238,83 @@
 (define (cps-convert expr)
   (T*-k expr (lambda (x) x)))
 
+;; closure conversion
+
+(define keep filter)
+
+(define (diff s1 s2)
+  (cond ((null? s1) '())
+        ((memq (car s1) s2) (diff (cdr s1) s2))
+        (else (cons (car s1) (diff (cdr s1) s2)))))
+
+(define (union s1 s2)
+  (cond ((null? s1) s2)
+        ((memq (car s1) s2) (union (cdr s1) s2))
+        (else (cons (car s1) (union (cdr s1) s2)))))
+
+(define (union-multi sets) (foldl union '() sets))
+
+(define (free-variables expr)
+  (match expr
+    ((or (? integer?)
+         (? boolean?)
+         (? char?)
+         (? special?))
+     '())
+    ((? symbol?) (list expr))
+    (`(lambda (,formals ...) ,body)
+     (diff (free-variables body) formals))
+    (`(let ((,ids ,vals) ...) ,body)
+     (append (union-multi (map free-variables vals))
+             (diff (free-variables body) ids)))
+    (else
+     (union-multi (map free-variables expr)))))
+
+(define (index-of x lst)
+  (let loop ((lst lst) (index 0))
+    (cond ((not (pair? lst)) #f)
+          ((eq? (car lst) x) index)
+          (else (loop (cdr lst) (add1 index))))))
+
+(define (closure-convert expr)
+  (define (convert expr self fvs)
+    (define (convert1 expr)
+      (match expr
+        ((or (? integer?)
+             (? boolean?)
+             (? char?))
+         expr)
+        ((? symbol?)
+         (let ((index (index-of expr fvs)))
+           (if index
+               `(%closure-ref ,self ,(add1 index))
+               expr)))
+        (`(set! ,id ,val)
+         `(set! ,id ,(convert1 val)))
+        (`(let ((,ids ,vals) ...) ,body)
+         `(let (,@(map list ids (map convert1 vals)))
+            ,(convert1 body)))
+        (`(lambda (,formals ...) ,body)
+         (let ((new-fvs (keep (lambda (x)
+                                (not (global-var? x)))
+                              (free-variables expr))))
+           (if (null? new-fvs)
+               `(lambda (,@formals) ,(convert1 body))
+               (let ((new-self (new-label 'self)))
+                 `(%closure (lambda (,new-self ,@formals)
+                              ,(convert body new-self new-fvs))
+                            ,@(map convert1 new-fvs))))))
+        (`(,(and prim (? primitive?)) ,args ...)
+         `(,prim ,@(map convert1 args)))
+        (`(,(and special (? special?)) ,expr+ ...)
+         `(,special ,@(map convert1 expr+)))
+        ((? list?)
+         (map convert1 expr))
+        (else
+         (error 'closure-convert (format "unknown expression: ~a" expr)))))
+    (convert1 expr))
+  (convert expr #f '()))
+
 ;; compile
 
 (define (pipe input . pass*)
@@ -243,7 +329,8 @@
   (pipe filename
         parse
         alpha-convert
-        cps-convert
+        ;cps-convert
+        closure-convert
         pretty-print))
 
 ;; test
