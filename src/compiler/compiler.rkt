@@ -292,6 +292,8 @@
            (if index
                `(vector-ref ,closure ,index)
                expr)))
+        (`(begin ,expr)
+         (convert1 expr))
         (`(let ((,ids ,vals) ...) ,body)
          `(let (,@(map list ids (map convert1 vals)))
             ,(convert1 body)))
