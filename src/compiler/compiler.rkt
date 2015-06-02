@@ -228,8 +228,8 @@
   (if (null? exprs)
       (k '())
       (T-k (car exprs) (lambda (head)
-                      (T*-k (cdr exprs) (lambda (tail)
-                                       (k (cons head tail))))))))
+                         (T*-k (cdr exprs) (lambda (tail)
+                                             (k (cons head tail))))))))
 
 (define (cps-convert expr)
   (T*-k expr (lambda (x) x)))
@@ -317,8 +317,15 @@
 (define (asm opcode . args)
   `(,opcode ,@args))
 
-(define (frame index)
-  `(frame ,index))
+(define (make-global-env)
+  (let loop ((env *global-vars*)
+             (i 0)
+             (acc '()))
+    (cond ((null? env) acc)
+          (else (loop (cdr env)
+                      (sub1 i)
+                      (cons (make-binding (binding-val (car env)) i)
+                            acc))))))
 
 (define (code-generate expr)
   (define (emit expr fi env)
@@ -329,9 +336,18 @@
        (asm 'load-bool expr))
       ((? char?)
        (asm 'load-char expr))
+      ((? symbol?)
+       (cond ((lookup expr env)
+              => (lambda (x)
+                   (if (<= x 0)
+                       (asm 'get-global (abs x))
+                       (asm 'get-local x))))
+             (else
+              (error 'code-generate (format "undefined variable: ~a" expr)))))
       (else
        (error 'code-generate (format "unknown expression: ~a" expr)))))
-  (emit expr 1 '()))
+  
+  (emit expr 1 (make-global-env)))
 
 (define-primitive + #t)
 (define-primitive - #t)
