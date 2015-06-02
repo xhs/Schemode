@@ -69,13 +69,6 @@
 (define (primitive? sym)
   (macro-lookup sym *primitives*))
 
-(define-primitive + #t)
-(define-primitive - #t)
-(define-primitive * #t)
-(define-primitive vector #t)
-(define-primitive vector-ref #t)
-(define-primitive set! #t)
-
 ;; parse
 
 (define (parse filename)
@@ -320,6 +313,32 @@
   (convert expr #f '()))
 
 ;; compile
+
+(define (asm opcode . args)
+  `(,opcode ,@args))
+
+(define (frame index)
+  `(frame ,index))
+
+(define (code-generate expr)
+  (define (emit expr fi env)
+    (match expr
+      ((? integer?)
+       (asm 'load-int expr))
+      ((? boolean?)
+       (asm 'load-bool expr))
+      ((? char?)
+       (asm 'load-char expr))
+      (else
+       (error 'code-generate (format "unknown expression: ~a" expr)))))
+  (emit expr 1 '()))
+
+(define-primitive + #t)
+(define-primitive - #t)
+(define-primitive * #t)
+(define-primitive vector #t)
+(define-primitive vector-ref #t)
+(define-primitive set! #t) ; our extended version
 
 (define (pipe input . pass*)
   (let loop ((input input)
