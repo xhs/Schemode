@@ -314,8 +314,20 @@
 
 ;; compile
 
+(define-struct instruction (opcode args))
+
 (define (asm opcode . args)
-  `(,opcode ,@args))
+  (make-instruction opcode args))
+
+(define (instruction-repr insts)
+  (map (lambda (inst)
+         (let ((opcode (instruction-opcode inst))
+               (args (instruction-args inst)))
+           (if (null? args)
+               (list opcode)
+               `(,opcode ,@args))))
+       (filter instruction? (flatten insts))))
+
 
 (define (make-global-env)
   (let loop ((env *global-vars*)
