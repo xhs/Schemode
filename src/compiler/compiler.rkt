@@ -349,9 +349,25 @@
   
   (emit expr 1 (make-global-env)))
 
-(define-primitive + #t)
-(define-primitive - #t)
-(define-primitive * #t)
+(define-syntax define-arithmetic
+  (syntax-rules ()
+    ((_ prim opcode)
+     (define-primitive prim
+       (lambda (args fi env)
+         (if (= 2 (length args))
+             (let ((lhs (car args))
+                   (rhs (cadr args)))
+               (list (emit rhs fi env)
+                     (asm 'push-acc)
+                     (emit lhs (add1 fi) env)
+                     (asm opcode)))
+             (error (quote prim) (format "arity mismatch: ~a" args))))))))
+
+(define-arithmetic + 'add-pop)
+(define-arithmetic - 'subtract-pop)
+(define-arithmetic * 'multiply-pop)
+(define-arithmetic / 'divide-pop)
+
 (define-primitive vector #t)
 (define-primitive vector-ref #t)
 (define-primitive set! #t) ; our extended version
