@@ -233,7 +233,7 @@
                                              (k (cons head tail))))))))
 
 (define (cps-convert expr)
-  (T*-k expr (lambda (x) x)))
+  (T*-k expr (lambda (x) `(%halt ,x))))
 
 ;; closure conversion
 
