@@ -320,6 +320,9 @@
 (define (asm opcode . args)
   (make-instruction opcode args))
 
+(define (instruction-flatten insts)
+  (filter instruction? (flatten insts)))
+
 (define (instruction-repr insts)
   (map (lambda (inst)
          (let ((opcode (instruction-opcode inst))
@@ -327,39 +330,107 @@
            (if (null? args)
                (list opcode)
                `(,opcode ,@args))))
-       (filter instruction? (flatten insts))))
+       insts))
 
+(define (emit expr fi env)
+  (match expr
+    ((? integer?)
+     (asm 'load-integer expr))
+    ((? boolean?)
+     (asm 'load-boolean expr))
+    ((? char?)
+     (asm 'load-character expr))
+    ((? symbol?)
+     (cond ((lookup expr env)
+            => (lambda (x)
+                 (if (integer? x)
+                     (asm 'get-frame-offset x)
+                     (asm 'get-global-offset (cadr x)))))
+           (else
+            (error 'code-generate (format "undefined variable: ~a" expr)))))
+    (`(begin ,expr+ ...)
+     (map (lambda (e) (emit e fi env)) expr+))
+    (`(if ,test ,conseq ,altern)
+     (let ((alt-label (new-label 'L))
+           (end-label (new-label 'L)))
+       (list (emit test fi env)
+             (asm 'jump-if-false alt-label)
+             (emit conseq fi env)
+             (asm 'jump end-label)
+             (asm 'label alt-label)
+             (emit altern fi env)
+             (asm 'label end-label))))
+    (`(let (,bindings ...) ,body)
+     (let loop ((bindings bindings)
+                (fi fi)
+                (env env))
+       (cond ((empty? bindings)
+              (emit body fi env))
+             (else
+              (let* ((b (car bindings))
+                     (id (car b))
+                     (val (cadr b)))
+                (list (emit val fi env)
+                      (asm 'push-r)
+                      (loop (cdr bindings)
+                            (add1 fi)
+                            (cons (make-binding id fi)
+                                  env))))))))
+    (`(lambda (,formals ...) ,body)
+     (let ((code (new-label 'code))
+           (end-label (new-label 'L)))
+       (list (asm 'jump end-label)
+             (asm 'label code)
+             (let loop ((fmls (reverse formals))
+                        (si -1)
+                        (env env))
+               (cond ((null? fmls)
+                      (emit body fi env))
+                     (else
+                      (loop (cdr fmls)
+                            (sub1 si)
+                            (cons (make-binding (car fmls) si)
+                                  env)))))
+             (asm 'return)
+             (asm 'label end-label)
+             (asm 'load-label code))))
+    (`(apply ,fn ,args)
+     (emit `(,fn ,@args) fi env))
+    (`(,(and prim (? primitive?)) ,args ...)
+     ((macro-lookup prim) args fi env))
+    (`(,fn ,args ...)
+     (let ((num (length args))
+           (bak 0))
+       (list (let loop ((args args)
+                        (fi fi))
+               (cond ((null? args)
+                      (begin
+                        (list (emit fn fi env)
+                              (asm 'adjust-frame-pointer fi)
+                              (asm 'call-r)
+                              (set! bak fi))))
+                     (else
+                      (begin
+                        (list (emit (car args) fi env)
+                              (asm 'push-r)
+                              (loop (cdr args)
+                                    (add1 fi)))))))
+             (asm 'adjust-frame-pointer (- 0 bak)))))
+    (else
+     (error 'code-generate (format "unknown expression: ~a" expr)))))
 
 (define (make-global-env)
   (let loop ((env *global-vars*)
-             (i 0)
+             (index 0)
              (acc '()))
     (cond ((null? env) acc)
           (else (loop (cdr env)
-                      (sub1 i)
-                      (cons (make-binding (binding-val (car env)) i)
+                      (add1 index)
+                      (cons (make-binding (binding-val (car env))
+                                          `(global ,index))
                             acc))))))
 
 (define (code-generate expr)
-  (define (emit expr fi env)
-    (match expr
-      ((? integer?)
-       (asm 'load-int expr))
-      ((? boolean?)
-       (asm 'load-bool expr))
-      ((? char?)
-       (asm 'load-char expr))
-      ((? symbol?)
-       (cond ((lookup expr env)
-              => (lambda (x)
-                   (if (<= x 0)
-                       (asm 'get-global (abs x))
-                       (asm 'get-local x))))
-             (else
-              (error 'code-generate (format "undefined variable: ~a" expr)))))
-      (else
-       (error 'code-generate (format "unknown expression: ~a" expr)))))
-  
   (emit expr 1 (make-global-env)))
 
 (define-syntax define-arithmetic
@@ -371,7 +442,7 @@
              (let ((lhs (car args))
                    (rhs (cadr args)))
                (list (emit rhs fi env)
-                     (asm 'push-acc)
+                     (asm 'push-r)
                      (emit lhs (add1 fi) env)
                      (asm opcode)))
              (error (quote prim) (format "arity mismatch: ~a" args))))))))
@@ -381,9 +452,63 @@
 (define-arithmetic * 'multiply-pop)
 (define-arithmetic / 'divide-pop)
 
-(define-primitive vector #t)
-(define-primitive vector-ref #t)
-(define-primitive set! #t) ; our extended version
+(define-primitive vector
+  (lambda (args fi env)
+    (let ((num (length args)))
+      (if (> num 0)
+          (list (asm 'allocate-heap num)
+                (let loop ((args args)
+                           (index 0))
+                  (if (null? args)
+                      (asm 'load-heap-pointer)
+                      (list (emit (car args) fi env)
+                            (asm 'set-heap-offset index)
+                            (loop (cdr args)
+                                  (add1 index))))))
+          (error 'vector (format "arity mismatch: ~a" args))))))
+
+(define-primitive vector-ref
+  (lambda (args fi env)
+    (if (= 2 (length args))
+        (let ((ref (car args))
+              (offset (cadr args)))
+          (list (emit ref fi env)
+                (asm 'store-heap-pointer)
+                (emit offset fi env)
+                (asm 'get-heap-r)))
+        (error 'vector-ref (format "arity mismatch: ~a" args)))))
+
+; our extended version
+(define-primitive set!
+  (lambda (args fi env)
+    (if (= 2 (length args))
+        (let ((target (car args))
+              (value (cadr args)))
+          (list (emit value fi env)
+                (match target
+                  ((? symbol?)
+                   (cond ((lookup target env)
+                          => (lambda (x)
+                               (if (integer? x)
+                                   (asm 'set-frame-offset x)
+                                   (asm 'set-global-offset (cadr x)))))))
+                  ; generated by compiler
+                  ; offset is guaranteed to be an immediate integer
+                  (`(vector-ref ,ref ,offset)
+                   (list (asm 'set-frame-offset fi)
+                         (emit ref (add1 fi) env)
+                         (asm 'store-heap-pointer)
+                         (asm 'get-frame-offset fi)
+                         (asm 'set-heap-offset offset)
+                         (asm 'void)))
+                  (else
+                   (error 'set! (format "invalid target: ~a" target))))))
+        (error 'set! (format "arity mismatch: ~a" args)))))
+
+(define-primitive %halt
+  (lambda (args fi env)
+    (list (emit (car args) fi env)
+          (asm 'halt))))
 
 (define (pipe input . pass*)
   (let loop ((input input)
@@ -399,6 +524,9 @@
         alpha-convert
         cps-convert
         closure-convert
+        code-generate
+        instruction-flatten
+        instruction-repr
         pretty-print))
 
 ;; test
