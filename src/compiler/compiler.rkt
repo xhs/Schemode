@@ -60,14 +60,15 @@
            (cons (make-macro (quote prim) emitter)
                  *primitives*)))))
 
-(define (macro-lookup sym macros)
-  (cond ((null? macros) #f)
-        ((eq? (macro-id (car macros)) sym)
-         (macro-emitter (car macros)))
-        (else (macro-lookup sym (cdr macros)))))
+(define (macro-lookup sym)
+  (let loop ((macros *primitives*))
+    (cond ((null? macros) #f)
+          ((eq? (macro-id (car macros)) sym)
+           (macro-emitter (car macros)))
+          (else (loop (cdr macros))))))
 
 (define (primitive? sym)
-  (macro-lookup sym *primitives*))
+  (macro-lookup sym))
 
 ;; parse
 
