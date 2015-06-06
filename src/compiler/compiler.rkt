@@ -85,6 +85,16 @@
 (define (parse filename)
   (cons 'begin (file->list filename)))
 
+;; load external resources
+
+(define (external-load expr)
+  (match expr
+    (`(begin ,expr+ ...)
+     `(begin ,@(map external-load expr+)))
+    (`(require ,resources ...)
+     `(begin ,@(map parse resources)))
+    (else expr)))
+
 ;; alpha conversion
 
 (define (alpha-convert expr)
@@ -557,6 +567,7 @@
 (define (compile filename)
   (pipe filename
         parse
+        external-load
         alpha-convert
         global-shake
         cps-convert

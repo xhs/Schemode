@@ -2,3 +2,5 @@
 *.c
 
 src/compiler/test.scm
+
+src/compiler/external.scm
