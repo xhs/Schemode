@@ -357,22 +357,15 @@
 
 ;; compile
 
-(define-struct instruction (opcode args))
+(define-struct instruction (opcode operands))
 
 (define (asm opcode . args)
   (make-instruction opcode args))
 
 (define (instruction-flatten insts)
-  (filter instruction? (flatten insts)))
-
-(define (instruction-repr insts)
   (map (lambda (inst)
-         (let ((opcode (instruction-opcode inst))
-               (args (instruction-args inst)))
-           (if (null? args)
-               (list opcode)
-               `(,opcode ,@args))))
-       insts))
+         `(,(instruction-opcode inst) ,(instruction-operands inst)))
+       (filter instruction? (flatten insts))))
 
 (define (emit expr fi env)
   (match expr
@@ -556,6 +549,184 @@
     (list (emit (car args) fi env)
           (asm 'halt))))
 
+;; assemble
+
+(define *asms* '())
+
+(define-syntax define-asm
+  (syntax-rules ()
+    ((_ opcode hexifier)
+     (set! *asms*
+           (cons (make-binding (quote opcode) hexifier)
+                 *asms*)))))
+
+(define $and bitwise-and)
+(define $or bitwise-ior)
+(define $shift arithmetic-shift)
+
+(define-asm void
+  ; 1111_1111
+  (lambda (_)
+    `(hex (byte #b11111111))))
+
+(define-asm load-integer
+  ; 0000_0000 iiii_iiii
+  ; 0000_0001 xiii_iiii iiii_iiii iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((int (car operands)))
+      (if (or (> int 127)
+              (< int -128))
+          `(hex (byte #b00000001)
+                (dword ,int))
+          `(hex (byte ,($or #b00001000 ($shift int -8)))
+                (byte ,($and int #xff)))))))
+
+(define-asm load-boolean
+  ; 0000_001i
+  (lambda (operands)
+    (if (car operands)
+        `(hex (byte #b00000011))
+        `(hex (byte #b00000010)))))
+
+(define-asm load-character
+  ; 0000_0100 iiii_iiii
+  (lambda (operands)
+    `(hex (byte #b00000100)
+          (byte ,(char->integer (car operands))))))
+
+(define-asm push-r
+  ; 0000_0101
+  (lambda (_)
+    `(hex (byte #b00000101))))
+
+(define-asm set-global-offset
+  ; 0000_0110 iiii_iiii
+  ; 0000_0111 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          `(hex (byte #b00000110) (word ,offset))
+          `(hex (byte #b00000111) (byte ,offset))))))
+
+(define-asm get-global-offset
+  ; 0000_1000 iiii_iiii
+  ; 0000_1001 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          `(hex (byte #b00001001) (word ,offset))
+          `(hex (byte #b00001000) (byte ,offset))))))
+
+(define-asm set-frame-offset
+  ; 0000_1010 iiii_iiii
+  ; 0000_1011 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (or (> offset 127)
+              (< offset -128))
+          `(hex (byte #b00001011) (word ,offset))
+          `(hex (byte #b00001010) (byte ,offset))))))
+
+(define-asm get-frame-offset
+  ; 0000_1100 iiii_iiii
+  ; 0000_1101 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (or (> offset 127)
+              (< offset -128))
+          `(hex (byte #b00001101) (word ,offset))
+          `(hex (byte #b00001100) (byte ,offset))))))
+
+(define-asm allocate-heap
+  ; 0000_1110 iiii_iiii
+  ; 0000_1111 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((size (car operands)))
+      (if (> size 255)
+          `(hex (byte #b00001111) (word ,size))
+          `(hex (byte #b00001110) (byte ,size))))))
+
+(define-asm set-heap-offset
+  ; 0001_0000 iiii_iiii
+  ; 0001_0001 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          `(hex (byte #b00010001) (word ,offset))
+          `(hex (byte #b00010000) (byte ,offset))))))
+
+(define-asm get-heap-r
+  ; 0001_0010
+  (lambda (_)
+    `(hex (byte #b00010010))))
+
+(define-asm load-heap-pointer
+  ; 0001_0011
+  (lambda (_)
+    `(hex (byte #b00010011))))
+
+(define-asm store-heap-pointer
+  ; 0001_0100
+  (lambda (_)
+    `(hex (byte #b00010100))))
+
+(define-asm adjust-frame-pointer
+  ; 0001_0101 iiii_iiii
+  ; 0001_0110 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((adj (car operands)))
+      (if (or (> adj 127)
+              (< adj -128))
+          `(hex (byte #b00001101) (word ,adj))
+          `(hex (byte #b00001100) (byte ,adj))))))
+
+(define-asm call-r
+  ; 0001_0111
+  (lambda (_)
+    `(hex (byte #b00010111))))
+
+(define-asm return
+  ; 0001_1000
+  (lambda (_)
+    `(hex (byte #b00011000))))
+
+(define-asm halt
+  ; 0001_1001
+  (lambda (_)
+    `(hex (byte #b00011001))))
+
+(define-asm add-pop
+  ; 0001_1010
+  (lambda (_)
+    `(hex (byte #b00011010))))
+
+(define-asm subtract-pop
+  ; 0001_1011
+  (lambda (_)
+    `(hex (byte #b00011011))))
+
+(define-asm multiply-pop
+  ; 0001_1100
+  (lambda (_)
+    `(hex (byte #b00011100))))
+
+(define-asm divide-pop
+  ; 0001_1101
+  (lambda (_)
+    `(hex (byte #b00011101))))
+
+(define (assemble insts)
+  (define (assemble1 inst)
+    (let ((opcode (car inst))
+          (operands (cadr inst)))
+      (cond ((lookup opcode *asms*)
+             => (lambda (a)
+                  ((binding-val a) operands)))
+            (else inst))))
+  (map assemble1 insts))
+
+;; test
+
 (define (pipe input . pass*)
   (let loop ((input input)
              (pass* pass*))
@@ -574,9 +745,7 @@
         closure-convert
         code-generate
         instruction-flatten
-        instruction-repr
+        assemble
         pretty-print))
-
-;; test
 
 (compile "test.scm")
