@@ -831,6 +831,19 @@
                  (map assemble-label
                       (map assemble-inst insts)))))))
 
+;; output
+
+(define (binary-output dl)
+  (let ((out (open-output-file "output.bin"
+                               #:mode 'binary #:exists 'replace)))
+    (let loop ((dl dl))
+      (if (null? dl)
+          (close-output-port out)
+          (let* ((b (car dl))
+                 (d (if (< b 0) (+ 256 b) b)))
+            (write-byte d out)
+            (loop (cdr dl)))))))
+
 ;; test
 
 (define (pipe input . pass*)
@@ -852,6 +865,7 @@
         code-generate
         instruction-flatten
         assemble
+        binary-output
         pretty-print))
 
 (compile "test.scm")
