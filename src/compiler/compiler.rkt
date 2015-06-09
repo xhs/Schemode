@@ -600,8 +600,8 @@
               ,(make-dword int)))
           (begin
             (grow 2)
-            `(,(make-byte ($or #b00001000 ($shift int -8)))
-              ,(make-byte ($and int #xff))))))))
+            `(,(make-byte #b00000000)
+              ,(make-byte int)))))))
 
 (define-asm load-boolean
   ; 0000_001i
@@ -632,10 +632,10 @@
       (if (> offset 255)
           (begin
             (grow 3)
-            `(,(make-byte #b00000110) ,(make-word offset)))
+            `(,(make-byte #b00000111) ,(make-word offset)))
           (begin
             (grow 2)
-            `(,(make-byte #b00000111) ,(make-byte offset)))))))
+            `(,(make-byte #b00000110) ,(make-byte offset)))))))
 
 (define-asm get-global-offset
   ; 0000_1000 iiii_iiii
