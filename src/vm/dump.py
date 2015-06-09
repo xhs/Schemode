@@ -23,7 +23,7 @@ with open(sys.argv[1], 'rb') as f:
     print 'invalid payload length:', length
     sys.exit(-3)
 
-  checksum = unpack('!I', bytes[16:20])[0]
+  checksum = unpack('!i', bytes[16:20])[0]
   codes = bytes[20:]
   if checksum != crc32(codes):
     print "invalid CRC32 checksum: expected '%s' but got '%s'" %(hex(checksum), hex(crc32(codes)))
