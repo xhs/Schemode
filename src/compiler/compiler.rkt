@@ -790,27 +790,28 @@
              (begin
                (make-label (car operands))
                (void)))
-            (else inst))))
+            (else
+             (begin (grow 5) inst)))))
   (define (assemble-label inst)
     (match inst
       (`(load-label (,label))
-       ; 0001_1110 iiii_iiii
+       ; 0001_1110 iiii_iiii iiii_iiii iiii_iiii iiii_iiii
+       (cond ((lookup label *labels*)
+              => (lambda (l)
+                   (let ((dest (binding-val l)))
+                     `(,(make-byte #b00011110) ,(make-dword dest)))))))
+      (`(jump (,label))
        ; 0001_1111 iiii_iiii iiii_iiii iiii_iiii iiii_iiii
        (cond ((lookup label *labels*)
               => (lambda (l)
                    (let ((dest (binding-val l)))
-                     (if (> dest 255)
-                         `(,(make-byte #b00011111) ,(make-dword dest))
-                         `(,(make-byte #b00011110) ,(make-byte dest))))))))
-      (`(jump (,label))
-       ; 0010_0000 iiii_iiii
-       ; 0010_0001 iiii_iiii iiii_iiii iiii_iiii iiii_iiii
+                     `(,(make-byte #b00011111) ,(make-dword dest)))))))
+      (`(jump-if-false (,label))
+       ; 0010_0000 iiii_iiii iiii_iiii iiii_iiii iiii_iiii
        (cond ((lookup label *labels*)
               => (lambda (l)
                    (let ((dest (binding-val l)))
-                     (if (> dest 255)
-                         `(,(make-byte #b00100001) ,(make-dword dest))
-                         `(,(make-byte #b00100000) ,(make-byte dest))))))))
+                     `(,(make-byte #b00100000) ,(make-dword dest)))))))
       (else inst)))
   (define (hexify hex)
     (cond ((byte? hex)

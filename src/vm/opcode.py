@@ -37,8 +37,7 @@ opcode_map = {
   0b00011011: mk('subtract-pop', '', 0),
   0b00011100: mk('multiply-pop', '', 0),
   0b00011101: mk('divide-pop', '', 0),
-  0b00011110: mk('load-label-uint8', 'B', 1),
-  0b00011111: mk('load-label-uint32', '!I', 4),
-  0b00100000: mk('jump-uint8', 'B', 1),
-  0b00100001: mk('jump-uint32', '!I', 4)
+  0b00011110: mk('load-label-uint32', '!I', 4),
+  0b00011111: mk('jump-uint32', '!I', 4),
+  0b00100000: mk('jump-if-false-uint32', '!I', 4)
 }
