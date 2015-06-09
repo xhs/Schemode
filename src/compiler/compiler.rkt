@@ -836,12 +836,12 @@
 
 (define (crc32 datum)
   ($xor (for/fold ((acc #xffffffff))
-                 ((data datum))
-         (for/fold ((acc ($xor acc data)))
-                   ((num (in-range 0 8)))
-           ($xor (quotient acc 2)
-                 (* #xedb88320 ($and acc 1)))))
-       #xffffffff))
+                  ((data datum))
+          (for/fold ((acc ($xor acc data)))
+                    ((num (in-range 0 8)))
+            ($xor (quotient acc 2)
+                  (* #xedb88320 ($and acc 1)))))
+        #xffffffff))
 
 (define (write-dword dw out)
   (write-byte ($shift dw -24) out)
@@ -853,8 +853,8 @@
   (let ((out (open-output-file "output.bin"
                                #:mode 'binary #:exists 'replace))
         (datum (map (lambda (b)
-                   (if (< b 0) (+ 256 b) b))
-                 datum)))
+                      (if (< b 0) (+ 256 b) b))
+                    datum)))
     (write-string "Schemode" out) ; magic header
     (write-dword 1 out) ; version number
     (write-dword (length datum) out) ; payload length
