@@ -562,6 +562,7 @@
 
 (define $and bitwise-and)
 (define $or bitwise-ior)
+(define $xor bitwise-xor)
 (define $shift arithmetic-shift)
 
 (define *label-offset* 0)
@@ -833,16 +834,37 @@
 
 ;; output
 
-(define (binary-output dl)
+(define (crc32 datum)
+  ($xor (for/fold ((acc #xffffffff))
+                 ((data datum))
+         (for/fold ((acc ($xor acc data)))
+                   ((num (in-range 0 8)))
+           ($xor (quotient acc 2)
+                 (* #xedb88320 ($and acc 1)))))
+       #xffffffff))
+
+(define (write-dword dw out)
+  (write-byte ($shift dw -24) out)
+  (write-byte ($and #xff ($shift dw -16)) out)
+  (write-byte ($and #xff ($shift dw -8)) out)
+  (write-byte ($and #xff dw) out))
+
+(define (binary-output datum)
   (let ((out (open-output-file "output.bin"
-                               #:mode 'binary #:exists 'replace)))
-    (let loop ((dl dl))
-      (if (null? dl)
+                               #:mode 'binary #:exists 'replace))
+        (datum (map (lambda (b)
+                   (if (< b 0) (+ 256 b) b))
+                 datum)))
+    (write-string "Schemode" out) ; magic header
+    (write-dword 1 out) ; version number
+    (write-dword (length datum) out) ; payload length
+    (write-dword (crc32 datum) out) ; CRC32 checksum
+    (let loop ((datum datum))
+      (if (null? datum)
           (close-output-port out)
-          (let* ((b (car dl))
-                 (d (if (< b 0) (+ 256 b) b)))
-            (write-byte d out)
-            (loop (cdr dl)))))))
+          (let* ((b (car datum)))
+            (write-byte b out)
+            (loop (cdr datum)))))))
 
 ;; test
 
