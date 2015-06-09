@@ -1,6 +1,7 @@
 *~
+*.#rkt*
 *.c
+*.scm
+*.bin
 
-src/compiler/test.scm
-
-src/compiler/external.scm
+*.pyc
