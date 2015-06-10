@@ -15,7 +15,7 @@
                       (number->string count))))))
 
 (define (special? sym)
-  (or (member sym '(begin apply if))
+  (or (member sym '(begin if))
       (primitive? sym)))
 
 ;; environment
@@ -430,8 +430,6 @@
              (asm 'return)
              (asm 'label end-label)
              (asm 'load-label code))))
-    (`(apply ,fn ,args)
-     (emit `(,fn ,@args) fi env))
     (`(,(and prim (? primitive?)) ,args ...)
      ((macro-lookup prim) args fi env))
     (`(,fn ,args ...)
