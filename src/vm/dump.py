@@ -42,8 +42,8 @@ with open(sys.argv[1], 'rb') as f:
 
     if size > 0:
       operand = unpack(format, codes[i:i + size])[0]
-      print '{0:7d} {1:24s} {2}'.format(offset, opcode, operand)
+      print '{0:7d} {1:25s} {2}'.format(offset, opcode, operand)
     else:
-      print '{0:7d} {1:24s}'.format(offset, opcode)
+      print '{0:7d} {1:25s}'.format(offset, opcode)
 
     i = i + size
