@@ -730,10 +730,10 @@
               (< adj -128))
           (begin
             (grow 3)
-            `(,(make-byte #b00001101) ,(make-word adj)))
+            `(,(make-byte #b00010110) ,(make-word adj)))
           (begin
             (grow 2)
-            `(,(make-byte #b00001100) ,(make-byte adj)))))))
+            `(,(make-byte #b00010101) ,(make-byte adj)))))))
 
 (define-asm call-r
   ; 0001_0111
