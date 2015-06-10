@@ -275,7 +275,7 @@
                                              (k (cons head tail))))))))
 
 (define (cps-convert expr)
-  (T*-k expr (lambda (x) `(%halt ,x))))
+  (T*-k expr (lambda (x) x)))
 
 ;; closure conversion
 
@@ -467,7 +467,8 @@
 (define (code-generate expr)
   ; frame pointer points return address
   ; frame index starts from 1
-  (emit expr 1 (make-global-env)))
+  (list (emit expr 1 (make-global-env))
+        (asm 'halt)))
 
 (define-syntax define-arithmetic
   (syntax-rules ()
@@ -542,7 +543,7 @@
                    (error 'set! (format "invalid target: ~a" target))))))
         (error 'set! (format "arity mismatch: ~a" args)))))
 
-(define-primitive %halt
+(define-primitive halt
   (lambda (args fi env)
     (list (emit (car args) fi env)
           (asm 'halt))))
