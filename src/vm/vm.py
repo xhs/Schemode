@@ -137,5 +137,7 @@ with open(sys.argv[1], 'rb') as f:
       if acc == encode_bool(False):
         ip = operand
         continue
+    else:
+      raise Exception('unknown opcode')
 
     ip = ip + size
