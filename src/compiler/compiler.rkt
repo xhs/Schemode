@@ -460,7 +460,9 @@
      (error 'code-generate (format "unknown expression: ~a" expr)))))
 
 (define (make-global-env)
-  (let loop ((env *global-vars*)
+  (let loop ((env
+              (keep (lambda (g) (> (variable-refnum g) 0))
+                    *global-vars*))
              (index 0)
              (acc '()))
     (cond ((null? env) acc)
@@ -874,6 +876,14 @@
             (loop (cdr datum)))))))
 
 ;; test
+
+(define repr-b
+  (lambda (b)
+    `(,(binding-id b) ,(binding-val b))))
+
+(define repr-v
+  (lambda (v)
+    `(,(binding-id v) ,(variable-refnum v))))
 
 (define (pipe input . pass*)
   (let loop ((input input)
