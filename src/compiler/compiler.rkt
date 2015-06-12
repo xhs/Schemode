@@ -309,63 +309,33 @@
     (else
      (union-multi (map free-variables expr)))))
 
-(define (index-of x lst)
-  (let loop ((lst lst) (index 0))
-    (cond ((not (pair? lst)) #f)
-          ((eq? (car lst) x) index)
-          (else (loop (cdr lst) (add1 index))))))
-
 (define (closure-convert expr)
-  (define (convert expr self fvs)
-    (define (convert1 expr)
+  (let ((codes '()))
+    (define (convert expr)
       (match expr
-        ((or (? integer?)
-             (? boolean?)
-             (? char?))
-         expr)
-        ((? symbol?)
-         (let ((index (index-of expr fvs)))
-           (if index
-               `(vector-ref ,self ,(add1 index))
-               expr)))
-        (`(begin ,expr)
-         (convert1 expr))
-        (`(let ((,ids ,vals) ...) ,body)
-         `(let (,@(map list ids (map convert1 vals)))
-            ,(convert1 body)))
         (`(lambda (,formals ...) ,body)
-         (let ((new-fvs (keep (lambda (x)
-                                (not (global-var? x)))
-                              (free-variables expr))))
-           (let ((new-self (new-label 'self)))
-             `(vector
-               (lambda (,new-self ,@formals)
-                 ,(convert body new-self new-fvs))
-               ,@new-fvs))))
-        (`((lambda (,formals ...) ,body) ,args ...)
-         (let ((new-fvs (keep (lambda (x)
-                                (not (global-var? x)))
-                              (free-variables expr))))
-           (if (null? new-fvs)
-               `((lambda (,@formals) ,(convert1 body))
-                 ,@(map convert1 args))
-               (let ((closure (new-label 'closure))
-                     (new-self (new-label 'self)))
-                 `(let ((,closure (vector
-                                   (lambda (,new-self ,@formals)
-                                     ,(convert body new-self new-fvs))
-                                   ,@new-fvs)))
-                    ((vector-ref ,closure 0) ,closure ,@(map convert1 args)))))))
-        (`(,(and prim (? primitive?)) ,args ...)
-         `(,prim ,@(map convert1 args)))
-        (`(,(and special (? special?)) ,expr+ ...)
-         `(,special ,@(map convert1 expr+)))
-        (`(,fn ,args ...)
-         `((vector-ref ,fn 0) ,fn ,@(map convert1 args)))
-        (else
-         (error 'closure-convert (format "unknown expression: ~a" expr)))))
-    (convert1 expr))
-  (convert expr #f '()))
+         (let ((code (new-label 'code))
+               (fvs (keep (lambda (x) (not (global-var? x)))
+                          (free-variables expr))))
+           (set! codes
+                 (cons (list code
+                             `(code ,formals ,fvs ,(convert body)))
+                       codes))
+           `(closure ,code ,fvs)))
+        (`(let ((,ids ,vals) ...) ,body)
+         `(let (,@(map list ids (map convert vals)))
+            ,(convert body)))
+        ((? list?)
+         (map convert expr))
+        (else expr)))
+    (let ((body (convert expr)))
+      (let loop ((codes codes)
+                 (body body))
+        (if (null? codes)
+            body
+            (loop (cdr codes)
+                  `(let (,(car codes))
+                     ,body)))))))
 
 ;; compile
 
@@ -380,6 +350,7 @@
        (filter instruction? (flatten insts))))
 
 (define (emit expr fi env)
+  (display (format "~a~n~n" (map repr-b env)))
   (match expr
     ((? integer?)
      (asm 'load-integer expr))
@@ -391,9 +362,15 @@
      (cond ((lookup expr env)
             => (lambda (x)
                  (let ((y (binding-val x)))
-                   (if (integer? y)
-                       (asm 'get-frame-offset y)
-                       (asm 'get-global-offset (cadr y))))))
+                   (match y
+                     (`(global ,offset)
+                      (asm 'get-global-offset offset))
+                     (`(frame ,offset)
+                      (asm 'get-frame-offset offset))
+                     (`(closure ,offset)
+                      (asm 'get-closure-offset offset))
+                     (`(stack ,offset)
+                      (asm 'get-stack-offset offset))))))
            (else
             (error 'code-generate (format "undefined variable: ~a" expr)))))
     (`(begin ,expr+ ...)
@@ -422,26 +399,41 @@
                       (asm 'push-r)
                       (loop (cdr bindings)
                             (add1 fi)
-                            (cons (make-binding id fi)
+                            (cons (make-binding id `(stack ,fi))
                                   env))))))))
-    (`(lambda (,formals ...) ,body)
-     (let ((code (new-label 'code))
+    (`(code (,formals ...) (,fvs ...) ,body)
+     (let ((code-label (new-label 'L))
            (end-label (new-label 'L)))
        (list (asm 'jump end-label)
-             (asm 'label code)
-             (let loop ((fmls (reverse formals))
-                        (si -2)
-                        (env env))
-               (cond ((null? fmls)
-                      (emit body 1 env))
-                     (else
-                      (loop (cdr fmls)
-                            (sub1 si)
-                            (cons (make-binding (car fmls) si)
-                                  env)))))
+             (asm 'label code-label)
+             (emit body
+                   1 ; new frame index starts from 1
+                   (append (map make-binding
+                                formals
+                                (map (lambda (fi) `(frame ,fi))
+                                     (map (lambda (v) (sub1 v))
+                                          (range (- 0 (length formals)) 0))))
+                           (map make-binding
+                                fvs
+                                (map (lambda (ci) `(closure ,ci))
+                                     (map (lambda (v) (add1 v))
+                                          (range 0 (length fvs)))))
+                           env))
              (asm 'return)
              (asm 'label end-label)
-             (asm 'load-label code))))
+             (asm 'load-label code-label))))
+    (`(closure ,label ,fvs)
+     (list (asm 'allocate-heap (+ 1 (length fvs)))
+           (emit label fi env)
+           (asm 'set-heap-offset 0)
+           (let loop ((fvs fvs)
+                      (index 1))
+             (if (null? fvs)
+                 (asm 'load-heap-pointer)
+                 (list (emit (car fvs) fi env)
+                       (asm 'set-heap-offset index)
+                       (loop (cdr fvs)
+                             (add1 index)))))))
     (`(,(and prim (? primitive?)) ,args ...)
      ((macro-lookup prim) args fi env))
     (`(,fn ,args ...)
@@ -450,6 +442,8 @@
                   (fi fi))
          (if (null? args)
              (list (emit fn fi env)
+                   (asm 'store-closure-pointer)
+                   (asm 'get-closure-offset 0)
                    (asm 'call-r)
                    (asm 'adjust-stack-pointer (- 0 num)))
              (list (emit (car args) fi env)
@@ -473,7 +467,7 @@
                             acc))))))
 
 (define (code-generate expr)
-  ; frame pointer points return address
+  ; frame pointer points to return address
   ; frame index starts from 1
   (list (emit expr 1 (make-global-env))
         (asm 'halt)))
@@ -523,7 +517,6 @@
                 (asm 'get-heap-r)))
         (error 'vector-ref (format "arity mismatch: ~a" args)))))
 
-; our extended version
 (define-primitive set!
   (lambda (args fi env)
     (if (= 2 (length args))
@@ -535,19 +528,16 @@
                    (cond ((lookup target env)
                           => (lambda (x)
                                (list (let ((y (binding-val x)))
-                                       (if (integer? y)
-                                           (asm 'set-frame-offset y)
-                                           (asm 'set-global-offset (cadr y))))
+                                       (match y
+                                         (`(global ,offset)
+                                          (asm 'set-global-offset offset))
+                                         (`(frame ,offset)
+                                          (asm 'set-frame-offset offset))
+                                         (`(closure ,offset)
+                                          (asm 'set-closure-offset offset))
+                                         (`(stack ,offset)
+                                          (asm 'set-stack-offset offset))))
                                      (asm 'void))))))
-                  ; generated by compiler
-                  ; offset is guaranteed to be an immediate integer
-                  (`(vector-ref ,ref ,offset)
-                   (list (asm 'push-r)
-                         (emit ref (add1 fi) env)
-                         (asm 'store-heap-pointer)
-                         (asm 'get-frame-offset fi)
-                         (asm 'set-heap-offset offset)
-                         (asm 'void)))
                   (else
                    (error 'set! (format "invalid target: ~a" target))))))
         (error 'set! (format "arity mismatch: ~a" args)))))
@@ -787,6 +777,70 @@
     (grow 1)
     `(,(make-byte #b00011101))))
 
+(define-asm load-closure-pointer
+  ; 0010_0001
+  (lambda (_)
+    (grow 1)
+    `(,(make-byte #b00100001))))
+
+(define-asm store-closure-pointer
+  ; 0010_0010
+  (lambda (_)
+    (grow 1)
+    `(,(make-byte #b00100010))))
+
+(define-asm set-closure-offset
+  ; 0010_0011 iiii_iiii
+  ; 0010_0100 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          (begin
+            (grow 3)
+            `(,(make-byte #b00100100) ,(make-word offset)))
+          (begin
+            (grow 2)
+            `(,(make-byte #b00100011) ,(make-byte offset)))))))
+
+(define-asm get-closure-offset
+  ; 0010_0101 iiii_iiii
+  ; 0010_0110 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          (begin
+            (grow 3)
+            `(,(make-byte #b00100110) ,(make-word offset)))
+          (begin
+            (grow 2)
+            `(,(make-byte #b00100101) ,(make-byte offset)))))))
+
+(define-asm set-stack-offset
+  ; 0010_0111 iiii_iiii
+  ; 0010_1000 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          (begin
+            (grow 3)
+            `(,(make-byte #b00101000) ,(make-word offset)))
+          (begin
+            (grow 2)
+            `(,(make-byte #b00100111) ,(make-byte offset)))))))
+
+(define-asm get-stack-offset
+  ; 0010_1001 iiii_iiii
+  ; 0010_1010 iiii_iiii iiii_iiii
+  (lambda (operands)
+    (let ((offset (car operands)))
+      (if (> offset 255)
+          (begin
+            (grow 3)
+            `(,(make-byte #b00101010) ,(make-word offset)))
+          (begin
+            (grow 2)
+            `(,(make-byte #b00101001) ,(make-byte offset)))))))
+
 (define (assemble insts)
   (define (assemble-inst inst)
     (let ((opcode (car inst))
@@ -901,10 +955,10 @@
         global-shake
         cps-convert
         closure-convert
-        code-generate
-        instruction-flatten
-        assemble
-        binary-output
+        ;code-generate
+        ;instruction-flatten
+        ;assemble
+        ;binary-output
         pretty-print))
 
 (compile "test.scm")

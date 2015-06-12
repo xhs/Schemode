@@ -32,10 +32,11 @@ with open(sys.argv[1], 'rb') as f:
 
   ip = 0
   acc = 0
-  stack = list('x' * 16)
+  stack = list('x' * 48)
   fp = 0
   sp = 1
   hp = -1
+  cp = 0
   heap = {}
   global_slots = {}
 
@@ -48,7 +49,7 @@ with open(sys.argv[1], 'rb') as f:
     print 'HEAP:', heap
     print 'STACK:', stack
     print 'GLOBALS:', global_slots
-    print 'ACC:%d   FP:%d   SP:%d   HP:%d' %(acc, fp, sp, hp)
+    print 'ACC:%d   FP:%d   SP:%d   HP:%d   CP:%d' %(acc, fp, sp, hp, cp)
     print
 
     instruction = opcode_map[b]
@@ -137,6 +138,18 @@ with open(sys.argv[1], 'rb') as f:
       if acc == encode_bool(False):
         ip = operand
         continue
+    elif opcode == 'load-closure-pointer':
+      acc = encode_int(cp)
+    elif opcode == 'store-closure-pointer':
+      cp = decode_int(acc)
+    elif opcode in ['set-closure-offset-uint8', 'set-closure-offset-uint16']:
+      heap[cp][operand] = acc
+    elif opcode in ['get-closure-offset-uint8', 'get-closure-offset-uint16']:
+      acc = heap[cp][operand]
+    elif opcode in ['set-stack-offset-uint8', 'set-stack-offset-uint16']:
+      stack[operand] = acc
+    elif opcode in ['get-stack-offset-uint8', 'get-stack-offset-uint16']:
+      acc = stack[operand]
     else:
       raise Exception('unknown opcode')
 

@@ -3,4 +3,4 @@
 *.scm
 *.bin
 *.pyc
-*.rkt#1#
+*.rkt#*

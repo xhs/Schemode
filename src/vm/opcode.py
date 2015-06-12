@@ -39,5 +39,15 @@ opcode_map = {
   0b00011101: mk('divide-pop', '', 0),
   0b00011110: mk('load-label-uint32', '!I', 4),
   0b00011111: mk('jump-uint32', '!I', 4),
-  0b00100000: mk('jump-if-false-uint32', '!I', 4)
+  0b00100000: mk('jump-if-false-uint32', '!I', 4),
+  0b00100001: mk('load-closure-pointer', '', 0),
+  0b00100010: mk('store-closure-pointer', '', 0),
+  0b00100011: mk('set-closure-offset-uint8', 'B', 1),
+  0b00100100: mk('set-closure-offset-uint16', '!H', 2),
+  0b00100101: mk('get-closure-offset-uint8', 'B', 1),
+  0b00100110: mk('get-closure-offset-uint16', '!H', 2),
+  0b00100111: mk('set-stack-offset-uint8', 'B', 1),
+  0b00101000: mk('set-stack-offset-uint16', '!H', 2),
+  0b00101001: mk('get-stack-offset-uint8', 'B', 1),
+  0b00101010: mk('get-stack-offset-uint16', '!H', 2)
 }
