@@ -229,7 +229,7 @@
                         `(if ,$test
                              ,(T-c conseq $cont)
                              ,(T-c altern $cont)))))
-         $cont)))
+         ,$cont)))
     (`(let ((,ids ,vals) ...) ,body)
      (T*-k vals (lambda ($vals)
                   `(let (,@(map list ids $vals))
