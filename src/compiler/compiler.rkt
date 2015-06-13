@@ -350,7 +350,6 @@
        (filter instruction? (flatten insts))))
 
 (define (emit expr fi env)
-  (display (format "~a~n~n" (map repr-b env)))
   (match expr
     ((? integer?)
      (asm 'load-integer expr))
