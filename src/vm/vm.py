@@ -86,7 +86,7 @@ with open(sys.argv[1], 'rb') as f:
       acc = stack[fp + operand]
     elif opcode in ['allocate-heap-uint8', 'allocate-heap-uint16']:
       hp = len(heap)
-      heap[hp] = {}
+      heap[hp] = list(operand * 'x')
     elif opcode in ['set-heap-offset-uint8', 'set-heap-offset-uint16']:
       heap[hp][operand] = acc
     elif opcode == 'get-heap-r':
