@@ -191,6 +191,15 @@
 
 ;; cps conversion
 
+(define (cpsify prim)
+  (string->symbol
+   (string-append "%"
+                  (symbol->string prim))))
+
+(define (uncpsify prim)
+  (string->symbol
+   (substring (symbol->string prim) 1)))
+
 (define (atomic? expr)
   (match expr
     (`(lambda (,_ ...) ,_) #t)
@@ -236,7 +245,7 @@
                      ,(T-c body cont)))))
     (`(,(and prim (? primitive?)) ,args ...)
      (T*-k args (lambda ($args)
-                  `(,cont (,prim ,@$args)))))
+                  `(,(cpsify prim) ,cont ,@$args))))
     (`(,fn ,args ...)
      (T-k fn (lambda ($fn)
                (T*-k args (lambda ($args)
@@ -490,6 +499,25 @@
 (define-arithmetic * 'multiply-pop)
 (define-arithmetic / 'divide-pop)
 
+(define-syntax define-cps-primitive
+  (syntax-rules ()
+    ((_ cps-prim prim)
+     (let ((emitter (lambda (args fi env)
+                      (let ((cont (car args))
+                            (args (cdr args)))
+                        (list ((macro-lookup (quote prim)) args fi env)
+                              (asm 'push-r)
+                              (emit cont (add1 fi) env)
+                              (asm 'store-closure-pointer)
+                              (asm 'get-closure-offset 0)
+                              (asm 'call-r)
+                              (asm 'adjust-stack-pointer -1))))))
+       (set! *primitives*
+             (cons (make-macro (quote cps-prim) emitter)
+                   *primitives*))))))
+
+(define-cps-primitive %+ +)
+
 (define-primitive vector
   (lambda (args fi env)
     (let ((num (length args)))
@@ -540,6 +568,8 @@
                   (else
                    (error 'set! (format "invalid target: ~a" target))))))
         (error 'set! (format "arity mismatch: ~a" args)))))
+
+(define-cps-primitive %set! set!)
 
 (define-primitive halt
   (lambda (args fi env)
