@@ -982,12 +982,12 @@
         external-load
         alpha-convert
         global-shake
-        cps-convert
+        ;cps-convert
         closure-convert
-        ;code-generate
-        ;instruction-flatten
-        ;assemble
-        ;binary-output
+        code-generate
+        instruction-flatten
+        assemble
+        binary-output
         pretty-print))
 
 (compile "test.scm")

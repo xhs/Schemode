@@ -32,7 +32,7 @@ with open(sys.argv[1], 'rb') as f:
 
   ip = 0
   acc = 0
-  stack = list('x' * 48)
+  stack = list('x' * 36)
   fp = 0
   sp = 1
   hp = -1
