@@ -1,1 +1,1 @@
-Scheme compiler, virtual machine and bootloader for XonnectIO node.
+See [wee](https://github.com/xonnect/wee).
